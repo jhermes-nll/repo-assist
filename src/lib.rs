@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod config;
 pub mod paths;
+pub mod store;
 
 /// Tool name and version, kept in one place.
 pub const TOOL_NAME: &str = "ra";
