@@ -221,7 +221,18 @@ impl Store {
         F: FnOnce(&rusqlite::Connection) -> Result<T, rusqlite::Error>,
     {
         let lock = self.writer.lock().map_err(|_| StoreError::Poisoned)?;
-        f(&lock).map_err(StoreError::Database)
+        // Centralize atomicity (F1/F2): wrap the entire closure in a single transaction.
+        // `unchecked_transaction` (BEGIN DEFERRED) is safe here — one writer behind the
+        // mutex in WAL mode; readers use separate handles. No closure nests `store.write`
+        // and none runs VACUUM/PRAGMA journal_mode, so nesting is never attempted.
+        let tx = lock.unchecked_transaction().map_err(StoreError::Database)?;
+        match f(&tx) {
+            Ok(v) => {
+                tx.commit().map_err(StoreError::Database)?;
+                Ok(v)
+            }
+            Err(e) => Err(StoreError::Database(e)), // tx drops -> rollback
+        }
     }
 
     /// Persist one row to the `events` table and return its row id.
@@ -348,8 +359,7 @@ impl Store {
         calls: &[ToolCallRow<'_>],
     ) -> Result<(), StoreError> {
         self.write(|conn| {
-            let tx = conn.unchecked_transaction()?;
-            tx.execute(
+            conn.execute(
                 "INSERT INTO sessions(id, agent, file, cwd, worktree_id, started_ms, last_event_ms, tokens_in, tokens_out, tokens_cache, cost_usd, tool_calls, byte_offset, parse_errors) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, file=excluded.file, cwd=excluded.cwd, worktree_id=excluded.worktree_id, started_ms=excluded.started_ms, last_event_ms=excluded.last_event_ms, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, tokens_cache=excluded.tokens_cache, cost_usd=excluded.cost_usd, tool_calls=excluded.tool_calls, byte_offset=excluded.byte_offset, parse_errors=excluded.parse_errors",
                 rusqlite::params![
                     row.id, row.agent, row.file, row.cwd, row.worktree_id,
@@ -359,22 +369,21 @@ impl Store {
                 ],
             )?;
             // A rewritten file may carry a different session id: clean up stale rows' calls first.
-            tx.execute(
+            conn.execute(
                 "DELETE FROM tool_calls WHERE session_id IN (SELECT id FROM sessions WHERE file = ?1 AND id <> ?2)",
                 rusqlite::params![row.file, row.id],
             )?;
-            tx.execute(
+            conn.execute(
                 "DELETE FROM sessions WHERE file = ?1 AND id <> ?2",
                 rusqlite::params![row.file, row.id],
             )?;
-            tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [row.id])?;
+            conn.execute("DELETE FROM tool_calls WHERE session_id = ?1", [row.id])?;
             for c in calls {
-                tx.execute(
+                conn.execute(
                     "INSERT INTO tool_calls(session_id, ts_ms, tool, args_hash, is_error, result_hash) VALUES (?1,?2,?3,?4,?5,?6)",
                     rusqlite::params![row.id, c.ts_ms, c.tool, c.args_hash, c.is_error, c.result_hash],
                 )?;
             }
-            tx.commit()?;
             Ok(())
         })
     }

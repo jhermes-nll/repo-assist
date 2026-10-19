@@ -206,3 +206,38 @@ fn base_ref_and_merge_base_are_recorded() {
         );
     }
 }
+
+/// replace_files must be atomic: a failure mid-loop must not leave the file set
+/// partially deleted.
+#[test]
+fn sync_worktrees_replace_files_is_atomic() {
+    let repo = GitRepo::new();
+    let untracked = repo.path().join("seed.txt");
+    std::fs::write(&untracked, "x\n").unwrap();
+
+    let db = repo.path().join("state").join("db.sqlite");
+    std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let store = repo_assist::store::Store::open(&db).unwrap();
+    repo_assist::sources::git::sync_worktrees(&store, repo.path()).unwrap();
+
+    let before: i64 = store
+        .read(|c| c.query_row("SELECT COUNT(*) FROM worktree_files", [], |r| r.get(0)))
+        .unwrap();
+    assert!(before > 0, "seeded changed file should be recorded");
+
+    store
+        .write(|c| {
+            c.execute_batch(
+                "CREATE TRIGGER wf_boom BEFORE INSERT ON worktree_files BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+            )
+        })
+        .unwrap();
+
+    let res = repo_assist::sources::git::sync_worktrees(&store, repo.path());
+    assert!(res.is_err(), "forced failure must surface as an error");
+
+    let after: i64 = store
+        .read(|c| c.query_row("SELECT COUNT(*) FROM worktree_files", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(after, before, "file set must not be deleted on failure");
+}
