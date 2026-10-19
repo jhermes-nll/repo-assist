@@ -1,0 +1,6 @@
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+SIGNOFF: APPROVE
+
+All six round-4 findings stay CLOSED: C-F1 through C-F6, and the trailing-signature concern, which E72 and the NEED responses now evidence. I raise no new MUST against the delta.
+
+F1 [NICE] Task 4.1 | `F1_ID`/`F2_ID`/`F3_ID` are defined in 4.1, but the parser table keeps the ids as literals "and is itself the verification" | If the 4.1 test never references the consts, they are unused until 4.4. That raises `dead_code` in the test crate at the 4.1–4.3 `-D warnings` gates, the same class of problem as C-F3. The Task 4 end-gate is unaffected, so this never blocks. | Either define the consts in 4.4 with the helpers, or have the 4.1 table compare `ing.id` against them.

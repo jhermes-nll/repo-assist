@@ -1,0 +1,29 @@
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+SIGNOFF: CHANGES
+
+NEED: src/paths.rs:54-131
+NEED: src/store/mod.rs:146-170
+NEED: src/daemon/mod.rs:66-95
+NEED: src/sources/git.rs:239-250
+NEED: src/cli.rs:130-160
+
+F1 [MUST] Task 4 / 4.4 `sync_maps_sessions_inside_a_worktree_by_component_prefix` | "`s-fool` (cwd = `<wt-m>-suffix`) maps to NULL" | The repo root is itself a registered, `present=1` worktree, because `git worktree list` includes the main one. Test worktrees live at `<root>/wt-*` [E56]. `<root>/wt-m-suffix` is component-wise inside the main worktree, so `match_worktree` correctly returns the main worktree's id. The test asserts `None` and fails. | Assert `Some(main_worktree_id)` for `s-fool`, with the comment "matches the repo root, not `wt-m`". Alternatively use a cwd outside the repo root for the string-prefix case, and assert it differs from `wt-m`'s id.
+
+F2 [MUST] Task 4 / 4.2 `parse_errors_are_counted_and_torn_tails_are_not` | "`assert_eq!(ing.tokens_in, 10)`" | The body contains `assistant_ok` (input 10) and `call()`, which carries `usage.input = 1`. The sum is 11, so the assertion fails. The comment "torn tail contributes nothing" is also wrongly bound to this number. | Assert 11, or give `call()` zero usage. Also add `output == 6` so the torn tail is genuinely checked.
+
+F3 [MUST] Task 4 / 4.1 and 4.4 code blocks | "gates clean at 4.1 Step 4; 4.4 code is ready to paste" | Four defects:
+- `read_session_id` uses `BufReader` with no `use std::io::BufReader`, which is a hard compile error.
+- `.map(|(id,_)| Some(*id)).flatten()` triggers `clippy::map_flatten` under `-D warnings`.
+- The `expand` closure's `let p = …; p` triggers `let_and_return`.
+- 4.1 Step 4 demands clippy-clean, but `PathBuf`, `paths`, `Env` and `Store` are unused until 4.4, so unused-import warnings become errors.
+An implementer following the steps gets stuck on a red gate. | Add the `BufReader` import. Use `.map(|(id, _)| *id)` and return the `PathBuf` directly. In 4.1, import only what is used, or run the clippy gate only from the end of 4.4.
+
+F4 [MUST] Task 2 and Task 3 | "Depends on: nothing; parallel group PG1; each leaves `clippy --all-targets -D warnings` clean" | Both tasks' verify steps run clippy over `--all-targets`, which includes `tests/store.rs`. That fails until Task 1 lands. The Blast radius text says the tasks are independent, but the gates make Tasks 2 and 3 depend on Task 1. | Declare Task 2 and Task 3 as depending on Task 1, or sequence 1→2→3 and drop the claim of parallel safety.
+
+F5 [MUST] Task 4 / 4.4 `discovery_…` | "`repo_assist::paths::Env::with("/home/u", None, None)` exists, and `env.home` is a `String`" | The ledger shows only `Env::from_real()` [E50]. No `Env::with` constructor or `home` field type is in evidence. The code calls `env.home.clone()` as a `String` and `trim_end_matches` on it. A mismatch is a compile error across the test and `resolve_sessions_root`. | Confirm the constructor and field type from `src/paths.rs`, and adapt the test and code. If no test constructor exists, build `Env` by struct literal, or make `resolve_sessions_root` take explicit `(session_dir, agent_dir, home)` values.
+
+F6 [MUST] Task 4 / 4.3 and 4.4 tests | "`store.read(|conn| conn.query_row(...))` compiles" | The existing pattern wraps results as `Ok(rows.collect::<Result<…>>()?)`. That implies the closure returns `Result<_, StoreError>`. The tests (`n`, `calls`, `read_agg`) return a bare `rusqlite::Result` from `query_row`, which would be a type mismatch. | Check the `read` signature (E25 region). Wrap these in `Ok(… ?)` as the other tests do.
+
+F7 [NICE] Task 4 / 4.7 e2e | "`ra status --no-spawn --json` and `status["sessions"]`" | The `--no-spawn` flag and the JSON key are not in the ledger. E28 shows only a count query. | Verify against `StatusArgs`. Drop the flag if it is absent.
+
+F8 [NICE] Task 4 / 4.4 discovery test and Task 5 | "set_var is safe" and "env names verified" | In-process `set_var`/`remove_var` races with the parallel tests that spawn children. The comment says both vars are overridden, but only `SESSION_DIR` is, and precedence is what saves it. Separately, Task 5 step 2 contains garbled text ("ldefb…", "The broker notes"). The skip-on-unchanged test cannot distinguish "skipped" from "re-parsed", because the results are identical. | Pass env lookups into `resolve_sessions_root` as a parameter. Clean up the Task 5 text. Assert the skip by checking that `tool_calls` row ids are unchanged.

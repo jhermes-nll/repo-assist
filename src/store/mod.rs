@@ -349,7 +349,7 @@ impl Store {
     /// Upsert one `sessions` row and REPLACE its `tool_calls` rows.
     ///
     /// All statements run inside a single `unchecked_transaction` on the writer
-    /// connection, committed only at the end: a failure mid-way rolls back the session
+    /// connection (supplied by `Store::write`), committed only at the end: a failure mid-way rolls back the session
     /// row (including byte_offset) together with its tool_calls, so readers never see
     /// a session marked up-to-date with stale/missing tool_calls. A file rewritten
     /// with a different session id drops the previous row (`file` match).

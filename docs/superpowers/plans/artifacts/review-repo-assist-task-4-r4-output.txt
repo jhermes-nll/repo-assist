@@ -1,0 +1,20 @@
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+SIGNOFF: CHANGES
+
+NEED: src/daemon/mod.rs:60-95
+NEED: src/sources/git.rs:239-250
+NEED: src/paths.rs:25-53
+
+F1 [MUST] Task 4.1 / 4.4 / 4.7 (acceptance numbers) | Fixture 2's session id is `01a1249c-ec21-7703-8773-813f926a6357` | The ledger (E31) records it as `01a1249c-ec21-7703-8773-613f926a6357`, and the two differ at one character. The plan hard-codes its version in the parser test's `expected`, the sync test's `by_id`/`read_agg` calls and the e2e `served[1]`. If the ledger is right, three tests fail on a string the plan itself calls verified. The implementer then has to guess which source is wrong. | Read the fixture's line-1 `id`, correct either E31 or the plan, and use a single constant for the id in `tests/task_4.rs`.
+
+F2 [NICE] 4.1 `parse_file_lines` vs 4.4 `read_session_id` | The plan says a header exists only on line 1, and that non-first `session` lines yield no aggregates [E36]. | `parse_file_lines` accepts any valid v3 `session` line and overwrites `id`, `cwd` and `started_ms`. `read_session_id` reads only line 1. With two headers, the skip cursor is keyed on the first id while the row is stored under the last. The offset lookup then misses, so the file is re-parsed every tick. | Only accept the header when it is the first non-empty line, and ignore later `session` lines.
+
+F3 [NICE] 4.1–4.3 gates | Each sub-task's step claims "gates clean". | `open_store` and `sessions_root_with_fixtures` are defined in 4.1 but first used in 4.4. Under `-D warnings` on `--all-targets` they raise `dead_code` at the 4.1–4.3 gates. The Task 4 end-gate is fine. | Define each helper in the sub-task that first uses it.
+
+F4 [NICE] Task 4 blast radius | The plan says Task 4 touches nothing else and that no test scans the real `~/.pi`. | Flipping `Sessions` to `implemented: true` [E41] and starting a ticker on every `run_foreground` affects existing suites. Any test asserting the "not yet implemented" stub for `ra sessions`, or spawning a daemon without isolating `HOME`/`PI_CODING_AGENT_*`, now ingests the real 363M corpus [E39]. Any test asserting `sessions == 0` would also break. The ledger has no grep for either. | Grep `tests/` for `sessions` stub assertions and for daemon spawns without `HOME` isolation, and record the result as evidence.
+
+F5 [NICE] 4.3 `upsert_session_with_calls` | "ON DELETE CASCADE clears the stale row's tool_calls". | The ledger shows the REFERENCES clause [E23] but not `PRAGMA foreign_keys=ON` on the writer connection. If it is off, rewritten-id files leave orphan `tool_calls` rows. The test would not catch this. | Delete `tool_calls` for the stale ids explicitly before deleting their `sessions` rows.
+
+F6 [NICE] Task 2 Step 3 | The citation "E61-consistent citation; E66 in ledger" and the claim that `sock` is in scope at "tests/cli.rs:65-72 [E7]" | E66 is about fixture statistics. E7 cites lines 50-61, not 65-72. The socket-removal evidence is E61 only, and the `sock` binding is unverified. | Cite E61 and `src/ipc/server.rs:80`, and add evidence for the `sock` variable in `tests/cli.rs`.
+
+Also needed: `run_foreground`'s variable names and the `store` type (4.6), the `sync_worktrees` signature (4.4) and the `paths::canonicalize` signature (4.4) carry no E tag. The NEEDs above ask for the evidence on these. If any signature differs from what the plan assumes, that becomes a MUST.

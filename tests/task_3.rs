@@ -122,16 +122,15 @@ fn a_worktree_change_drifts_when_unexpected() {
     );
 
     // Now the task expects exactly `extra.txt`: it must drop out of the drift set.
+    // (Committed WAL rows are visible to a fresh read connection, so no checkpoint
+    // is needed here; an in-transaction checkpoint after the UPDATE would fail with
+    // "database table is locked" — that is what hid the earlier swallowed error.)
     store
         .write(|conn| {
             conn.execute(
                 "UPDATE tasks SET expected_paths = ?1 WHERE id = 't-extra'",
                 ["[\"extra.txt\"]"],
             )?;
-            // Cross-process WAL visibility (same quirk as the Task 2.4 IPC test): the read
-            // connection opened by `plan_drift_from_changed` won't see an uncheckpointed WAL
-            // page, so checkpoint explicitly before the follow-up read.
-            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").ok();
             Result::<(), _>::Ok(())
         })
         .expect("set expected_paths");

@@ -1,0 +1,12 @@
+⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to load your organization's connectors
+SIGNOFF: APPROVE
+
+F9 CLOSED (FIXED). The `\n` after `body` keeps the `call_a` result line in the complete region. Only the final assistant line is torn, so the stated assertions hold.
+
+F10 CLOSED (FIXED). The marker-row proof works:
+- The marker row is inserted after the first sync, so the `sessions` row exists for the foreign key.
+- A skipped sync leaves the marker in `tool_calls`, and any re-parse would delete it.
+- `read_agg` reads the `sessions.tool_calls` column, so the marker does not disturb the `(4999, 2)` assertion.
+- The `store.write` closure returns a bare `conn.execute(..)`, which satisfies the `Result<T, rusqlite::Error>` bound.
+
+There are no new findings, and no open findings remain from any round.

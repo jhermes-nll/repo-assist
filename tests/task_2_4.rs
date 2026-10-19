@@ -255,6 +255,10 @@ fn ra_plans_and_plan_over_ipc() {
         std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
         let store = Store::open(&db_path).expect("open + migrate the daemon's DB");
         seed_db(&store);
+        // This closure must stay write-free: it holds no write lock, so the
+        // checkpoint succeeds (busy=0, WAL truncated). Adding a write inside it
+        // would put the deferred transaction in a write state and make the
+        // in-transaction checkpoint fail with "database table is locked".
         store
             .write(|conn| conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)"))
             .expect("checkpoint the seeded DB's WAL");
