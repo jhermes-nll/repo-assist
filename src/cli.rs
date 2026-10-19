@@ -237,7 +237,7 @@ fn spec(cmd: &Command) -> Spec {
             task: 5,
         },
         Sessions(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 4,
         },
         Tui(_) => Spec {
@@ -275,6 +275,7 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
         Command::Plans(args) => run_plans(&args),
         Command::Plan(args) => run_plan(&args),
         Command::Drift(args) => run_drift(&args),
+        Command::Sessions(args) => run_sessions(&args),
         _ => run_implemented(cli.command),
     }
 }
@@ -509,6 +510,70 @@ fn run_status(args: &StatusArgs) -> Result<i32, anyhow::Error> {
 }
 
 /// Human-readable one-screen status output.
+/// `ra sessions`: known agent sessions (Task 4) — auto-spawns the daemon, then prints a
+/// table or JSON. Rows are refreshed by the daemon's sessions ticker, so output may trail
+/// the newest session file by up to ~60s (documented cadence, `daemon/sessions.rs`).
+fn run_sessions(args: &SessionsArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(crate::ipc::Method::Sessions, serde_json::Value::Null)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_sessions_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// Human-readable `ra sessions` output: one line per session, most recently active first.
+fn print_sessions_human(s: &serde_json::Value) {
+    let rows: &[_] = s
+        .get("sessions")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    if rows.is_empty() {
+        eprintln!("no sessions");
+    }
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?");
+        let agent = row
+            .get("agent")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?");
+        let cwd = row
+            .get("cwd")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("-");
+        let worktree = row
+            .get("worktree")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("-");
+        let cost = row
+            .get("cost_usd")
+            .and_then(serde_json::Value::as_f64)
+            .map(|c| format!("{c:.4}"))
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{id}  {agent}  in={} out={} cache={}  calls={}  cost={cost}  err={}  cwd={cwd}  worktree={worktree}",
+            row.get("tokens_in").and_then(serde_json::Value::as_i64).unwrap_or(0),
+            row.get("tokens_out").and_then(serde_json::Value::as_i64).unwrap_or(0),
+            row.get("tokens_cache").and_then(serde_json::Value::as_i64).unwrap_or(0),
+            row.get("tool_calls").and_then(serde_json::Value::as_i64).unwrap_or(0),
+            row.get("parse_errors").and_then(serde_json::Value::as_i64).unwrap_or(0),
+        );
+    }
+}
+
 fn print_status_human(s: &serde_json::Value) {
     let get = |k: &str| s.get(k).cloned().unwrap_or_default();
     println!(

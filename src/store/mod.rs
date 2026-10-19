@@ -97,6 +97,37 @@ pub struct EvidenceRow<'a> {
     pub confidence: &'a str,
 }
 
+/// One row to upsert into `sessions` (Task 4). Keyed on `id`; a re-ingest replaces every
+/// column (the session source fully recomputes aggregates on parse).
+#[derive(Debug, Clone)]
+pub struct SessionRow<'a> {
+    pub id: &'a str,
+    pub agent: &'a str,
+    pub file: &'a str,
+    pub cwd: Option<&'a str>,
+    pub worktree_id: Option<i64>,
+    pub started_ms: Option<i64>,
+    pub last_event_ms: Option<i64>,
+    pub tokens_in: i64,
+    pub tokens_out: i64,
+    pub tokens_cache: i64,
+    pub cost_usd: Option<f64>,
+    pub tool_calls: i64,
+    pub byte_offset: i64,
+    pub parse_errors: i64,
+}
+
+/// One `tool_calls` row belonging to one session (Task 4): a single assistant tool-call
+/// block, optionally enriched with its result matched during the same parse pass.
+#[derive(Debug, Clone)]
+pub struct ToolCallRow<'a> {
+    pub ts_ms: i64,
+    pub tool: &'a str,
+    pub args_hash: &'a str,
+    pub is_error: Option<bool>,
+    pub result_hash: Option<&'a str>,
+}
+
 impl Store {
     /// Open (or create and migrate) the database at `path`.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
@@ -304,6 +335,55 @@ impl Store {
             Ok(conn.last_insert_rowid())
         })
     }
+    /// Upsert one `sessions` row and REPLACE its `tool_calls` rows in a single write
+    /// transaction (Task 4): per-file atomicity — readers never see half a session. A
+    /// file rewritten with a different session id drops the previous row (`file` match).
+    pub fn upsert_session_with_calls(
+        &self,
+        row: &SessionRow<'_>,
+        calls: &[ToolCallRow<'_>],
+    ) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO sessions(id, agent, file, cwd, worktree_id, started_ms, last_event_ms, tokens_in, tokens_out, tokens_cache, cost_usd, tool_calls, byte_offset, parse_errors) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, file=excluded.file, cwd=excluded.cwd, worktree_id=excluded.worktree_id, started_ms=excluded.started_ms, last_event_ms=excluded.last_event_ms, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, tokens_cache=excluded.tokens_cache, cost_usd=excluded.cost_usd, tool_calls=excluded.tool_calls, byte_offset=excluded.byte_offset, parse_errors=excluded.parse_errors",
+                rusqlite::params![
+                    row.id, row.agent, row.file, row.cwd, row.worktree_id,
+                    row.started_ms, row.last_event_ms, row.tokens_in, row.tokens_out,
+                    row.tokens_cache, row.cost_usd, row.tool_calls, row.byte_offset,
+                    row.parse_errors,
+                ],
+            )?;
+            // A rewritten file may carry a different session id: clean up stale rows' calls first.
+            conn.execute(
+                "DELETE FROM tool_calls WHERE session_id IN (SELECT id FROM sessions WHERE file = ?1 AND id <> ?2)",
+                rusqlite::params![row.file, row.id],
+            )?;
+            conn.execute(
+                "DELETE FROM sessions WHERE file = ?1 AND id <> ?2",
+                rusqlite::params![row.file, row.id],
+            )?;
+            conn.execute("DELETE FROM tool_calls WHERE session_id = ?1", [row.id])?;
+            for c in calls {
+                conn.execute(
+                    "INSERT INTO tool_calls(session_id, ts_ms, tool, args_hash, is_error, result_hash) VALUES (?1,?2,?3,?4,?5,?6)",
+                    rusqlite::params![row.id, c.ts_ms, c.tool, c.args_hash, c.is_error, c.result_hash],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `sessions.id -> byte_offset` map — the skip cursor the session source consults.
+    pub fn session_file_offsets(
+        &self,
+    ) -> Result<std::collections::HashMap<String, i64>, StoreError> {
+        self.read(|conn| {
+            let mut stmt = conn.prepare("SELECT id, byte_offset FROM sessions")?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            rows.collect::<Result<std::collections::HashMap<_, _>, _>>()
+        })
+    }
+
     /// One drifted file (Task 3): a path that changed in the plan's worktree but that no
     /// task *expects* (`tasks.expected_paths`).
     ///

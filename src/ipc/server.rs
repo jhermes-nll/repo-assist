@@ -198,6 +198,11 @@ async fn dispatch_request(
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             write_reply(stream, &json!({ "id": req.id, "result": drift })).await?;
         }
+        Method::Sessions => {
+            let result = tokio::task::block_in_place(|| sessions_json(store))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
         Method::Plan => {
             match req.params.get("id").and_then(Value::as_str) {
                 None => write_reply(
@@ -325,6 +330,41 @@ fn plans_json(store: &Store) -> Result<Value, crate::store::StoreError> {
             plans.push(r?);
         }
         Ok(json!({ "plans": plans }))
+    })
+}
+
+/// Build the `Method::Sessions` result (Task 4): every session with its worktree path (when
+/// mapped), most recently active first. Pure store read — the daemon's sessions ticker
+/// keeps the rows fresh, mirroring how `plans_json` reads what the daemon ingested.
+fn sessions_json(store: &Store) -> Result<serde_json::Value, crate::store::StoreError> {
+    store.read(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.agent, s.file, s.cwd, s.worktree_id, wt.path,              s.started_ms, s.last_event_ms, s.tokens_in, s.tokens_out, s.tokens_cache,              s.cost_usd, s.tool_calls, s.byte_offset, s.parse_errors              FROM sessions s LEFT JOIN worktrees wt ON wt.id = s.worktree_id              ORDER BY COALESCE(s.last_event_ms, s.started_ms, 0) DESC, s.id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "agent": row.get::<_, String>(1)?,
+                "file": row.get::<_, String>(2)?,
+                "cwd": row.get::<_, Option<String>>(3)?,
+                "worktree_id": row.get::<_, Option<i64>>(4)?,
+                "worktree": row.get::<_, Option<String>>(5)?,
+                "started_ms": row.get::<_, Option<i64>>(6)?,
+                "last_event_ms": row.get::<_, Option<i64>>(7)?,
+                "tokens_in": row.get::<_, i64>(8)?,
+                "tokens_out": row.get::<_, i64>(9)?,
+                "tokens_cache": row.get::<_, i64>(10)?,
+                "cost_usd": row.get::<_, Option<f64>>(11)?,
+                "tool_calls": row.get::<_, i64>(12)?,
+                "byte_offset": row.get::<_, i64>(13)?,
+                "parse_errors": row.get::<_, i64>(14)?,
+            }))
+        })?;
+        let mut sessions = Vec::new();
+        for r in rows {
+            sessions.push(r?);
+        }
+        Ok(serde_json::json!({ "sessions": sessions }))
     })
 }
 

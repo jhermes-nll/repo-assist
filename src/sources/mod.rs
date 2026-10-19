@@ -4,3 +4,4 @@
 
 pub mod fswatch;
 pub mod git;
+pub mod sessions;

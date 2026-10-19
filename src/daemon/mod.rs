@@ -21,6 +21,7 @@ use tokio::sync::watch;
 
 pub mod bus;
 pub mod lock;
+pub mod sessions;
 
 use crate::config::Config;
 use crate::ipc::server::run_accept_loop;
@@ -76,6 +77,16 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
 
     // Task 2.3: start the worktree event bus (watcher + drain thread).
     let bus = crate::daemon::bus::start_bus(store.clone(), repo_root);
+
+    // Task 4: the sessions ingest ticker (pi files -> sessions/tool_calls rows). First
+    // pass runs immediately; then every 60s. Drop-guarded: any return path below drops the
+    // handle, which stops the thread.
+    let sessions_root = crate::sources::sessions::resolve_sessions_root(&state.env);
+    let _sessions_ticker = crate::daemon::sessions::SessionsTicker::start(
+        store.clone(),
+        repo_root.to_path_buf(),
+        sessions_root,
+    );
 
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
