@@ -52,7 +52,10 @@ fn a_worktree_change_is_persisted_by_the_event_bus() {
     std::fs::write(repo.path().join("wt-a").join("a.txt"), "changed\n").unwrap();
 
     // The bus re-runs the git source and persists a worktree_dirty event within 8s.
-    let got = wait_dirty(&store, &rt.join("wt-a"), Duration::from_secs(8));
+    // git reports worktree paths resolved (e.g. /private/var/... under a macOS TMPDIR
+    // symlink) while GitRepo hands out the unresolved form; compare canonicalized paths.
+    let wt_a = std::fs::canonicalize(rt.join("wt-a")).unwrap_or_else(|_| rt.join("wt-a"));
+    let got = wait_dirty(&store, &wt_a, Duration::from_secs(8));
     bus.stop();
 
     let (count, _last) = got.expect("no worktree_dirty event persisted within 8s; view was empty");
