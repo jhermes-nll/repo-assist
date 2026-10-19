@@ -106,17 +106,6 @@ fn daemon_roundtrip_status_and_second_daemon_fails() {
 
     // There is no `ra shutdown` CLI yet; the shutdown method is exercised via the raw client.
     // (Method::Shutdown exists; CLI surface lands in a later task. Kill via the pidfile.)
-    let pidfile = repo
-        .path()
-        .join("state")
-        .join("repo-assist")
-        .join(key)
-        .join("daemon.pid");
-    let pid: u32 = std::fs::read_to_string(&pidfile)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
     // Ask the daemon to shut down through the IPC `shutdown` method instead of a signal.
     let reply = repo_assist::ipc::client::Client::connect(sock.clone())
         .and_then(|mut c| c.call(repo_assist::ipc::Method::Shutdown, serde_json::Value::Null))
@@ -126,10 +115,12 @@ fn daemon_roundtrip_status_and_second_daemon_fails() {
         other => panic!("expected result for shutdown, got {other:?}"),
     }
 
-    // The daemon should exit on its own shortly after the shutdown request.
+    // The daemon exits on its own shortly after the shutdown request; the accept loop
+    // removes the socket file at exit, so its disappearance is the cross-platform signal
+    // (a /proc/<pid> existence check does not work on macOS).
     let mut gone = false;
-    for _ in 0..30 {
-        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+    for _ in 0..50 {
+        if !sock.exists() {
             gone = true;
             break;
         }
@@ -137,6 +128,6 @@ fn daemon_roundtrip_status_and_second_daemon_fails() {
     }
     assert!(
         gone,
-        "daemon pid {pid} did not exit after the shutdown request"
+        "daemon did not shut down (socket still present) after the shutdown request"
     );
 }

@@ -2,8 +2,9 @@
 //!
 //! The daemon holds an exclusive `flock` (via [`fs2`]) on a pidfile so that only one daemon
 //! runs per repository. If another *live* daemon holds the lock, the second daemon refuses to
-//! start (Section 6: "Refuse to start if another live daemon holds the pidfile flock"). If the
-//! recorded PID is dead, the lock is considered stale and taken over.
+//! start (Section 6: "Refuse to start if another live daemon holds the pidfile flock"). A stale
+//! lock is released by the OS when its holder dies, so acquiring the flock is the authority on
+//! liveness; the pidfile only names the holder for friendly messages.
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -29,9 +30,9 @@ pub enum LockError {
 
 /// Acquire the exclusive pidfile lock (fs2 `flock`) for the daemon running this process.
 ///
-/// Returns an opened [`File`] held exclusively. If another *live* daemon already holds the
-/// lock, returns [`LockError::Busy`]. If the recorded PID is dead, the lock is considered
-/// stale and taken over (Section 6).
+/// Takes the flock first and writes the pidfile only on success, so the pidfile always names
+/// the process that actually holds the lock. Returns an opened [`File`] held exclusively;
+/// returns [`LockError::Busy`] if another daemon already holds the lock (Section 6).
 pub fn acquire_lock(pid_path: &Path) -> Result<File, LockError> {
     if let Some(parent) = pid_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| LockError::StateDir(e.to_string()))?;
@@ -44,21 +45,15 @@ pub fn acquire_lock(pid_path: &Path) -> Result<File, LockError> {
         .open(pid_path)
         .map_err(|e| LockError::Io(e.to_string()))?;
 
-    // Inspect the previously recorded PID to detect a stale lock.
-    if let Ok(previous) = std::fs::read_to_string(pid_path) {
-        if let Ok(prev_pid) = previous.trim().parse::<u32>() {
-            if prev_pid != 0 && prev_pid != std::process::id() && is_alive(prev_pid) {
-                return Err(LockError::Busy(prev_pid));
-            }
-        }
-    }
-
-    // Stale or first run: record our own PID, then try (non-blocking) to take the exclusive
-    // lock so a second daemon fails fast instead of hanging (Section 6: "Refuse to start").
-    std::fs::write(pid_path, format!("{}", std::process::id()))
-        .map_err(|e| LockError::Io(e.to_string()))?;
+    // Take the exclusive lock BEFORE recording our pid: the pidfile then always names
+    // the process that actually holds the lock, and a failed contender reads the real
+    // holder's pid instead of clobbering the file.
     match file.try_lock_exclusive() {
-        Ok(()) => Ok(file),
+        Ok(()) => {
+            std::fs::write(pid_path, format!("{}", std::process::id()))
+                .map_err(|e| LockError::Io(e.to_string()))?;
+            Ok(file)
+        }
         Err(e) => {
             let held = std::fs::read_to_string(pid_path)
                 .ok()
@@ -71,9 +66,4 @@ pub fn acquire_lock(pid_path: &Path) -> Result<File, LockError> {
             }
         }
     }
-}
-
-/// Whether `pid` refers to a live process (Linux `/proc/<pid>` directory exists).
-fn is_alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
 }
