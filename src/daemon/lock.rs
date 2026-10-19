@@ -5,6 +5,14 @@
 //! start (Section 6: "Refuse to start if another live daemon holds the pidfile flock"). A stale
 //! lock is released by the OS when its holder dies, so acquiring the flock is the authority on
 //! liveness; the pidfile only names the holder for friendly messages.
+//!
+//! **Implementation contract:** correctness of writing the pid through `fs::write` on a second,
+//! short-lived file descriptor depends on `fs2` being backed by `flock(2)` — `flock` is scoped
+//! to the open file description, so it is unaffected by truncation of, or by closing, another
+//! descriptor on the same path. Migrating this locker to `fcntl`/`F_SETLK` would silently drop
+//! the lock when that descriptor closes. This lock path is also **Unix-only**: on Windows, fs2
+//! uses `LockFileEx` range locking, where a contender's read of the locked region can fail
+//! outright instead of returning the holder pid.
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -21,7 +29,7 @@ pub enum LockError {
     #[error("io error on the pidfile: {0}")]
     Io(String),
     /// The exclusive lock could not be taken (another process holds it).
-    #[error("could not take the pidfile lock: {0}")]
+    #[error("could not take the pidfile lock and no holder pid was recoverable: {0}")]
     Flock(String),
     /// Another live daemon already holds the lock (Section 6).
     #[error("a daemon is already running for this repository (pid {0})")]
@@ -55,10 +63,19 @@ pub fn acquire_lock(pid_path: &Path) -> Result<File, LockError> {
             Ok(file)
         }
         Err(e) => {
-            let held = std::fs::read_to_string(pid_path)
-                .ok()
-                .and_then(|t| t.trim().parse::<u32>().ok())
-                .unwrap_or(0);
+            // The winner may not have finished writing its pid yet; do a short bounded
+            // re-read of the pidfile before falling back to the raw flock error.
+            let mut held = 0u32;
+            for _ in 0..5 {
+                held = std::fs::read_to_string(pid_path)
+                    .ok()
+                    .and_then(|t| t.trim().parse::<u32>().ok())
+                    .unwrap_or(0);
+                if held != 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             if held != 0 && held != std::process::id() {
                 Err(LockError::Busy(held))
             } else {
