@@ -155,4 +155,49 @@ impl Store {
         let lock = self.writer.lock().map_err(|_| StoreError::Poisoned)?;
         f(&lock).map_err(StoreError::Database)
     }
+
+    /// Persist one row to the `events` table and return its row id.
+    ///
+    /// `source`/`kind` categorise the event; `subject` is a free-form subject (e.g. a
+    /// worktree path); `payload` is a JSON string.
+    pub fn append_event(
+        &self,
+        ts_ms: i64,
+        source: &str,
+        kind: &str,
+        subject: Option<&str>,
+        payload: &str,
+    ) -> Result<i64, StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO events(ts_ms, source, kind, subject, payload)                  VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![ts_ms, source, kind, subject, payload],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+    }
+
+    /// Recent per-worktree dirty status derived from the `events` table: for each worktree
+    /// path that has a `worktree_dirty` event, `(event_count, last_event_ms)`.
+    pub fn worktree_dirty_view(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (i64, Option<i64>)>, StoreError> {
+        self.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT subject, COUNT(*), MAX(ts_ms) FROM events                  WHERE source = 'worktree' AND kind = 'worktree_dirty'                  GROUP BY subject",
+            )?;
+            let mut out = std::collections::HashMap::new();
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (row.get::<_, i64>(1)?, row.get::<_, Option<i64>>(2)?),
+                ))
+            })?;
+            for r in rows {
+                let (path, (count, last)) = r?;
+                out.insert(path, (count, last));
+            }
+            Ok(out)
+        })
+    }
 }

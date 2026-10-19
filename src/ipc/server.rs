@@ -200,7 +200,7 @@ async fn dispatch_request(
 /// Build the status object for `ra status` (Section 6) by querying the store synchronously.
 fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::StoreError> {
     store.read(|conn| {
-        let worktrees: Vec<Value> = {
+        let mut worktrees: Vec<Value> = {
             let mut stmt = conn.prepare(
                 "SELECT wt.path, wt.branch, wt.head, wt.is_main, wt.present, \
                  COALESCE((SELECT COUNT(*) FROM worktree_files wf WHERE wf.worktree_id = wt.id), 0) AS changed, \
@@ -230,6 +230,23 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
             .query_row("SELECT COUNT(*) FROM findings WHERE state='open'", [], |r| r.get(0))?;
         let sessions: i64 =
             conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+        // Task 2.3: overlay per-worktree dirty status from the events table (persisted by
+        // the bus). `store.worktree_dirty_view` opens its own read handle, so it is safe to
+        // call here inside the read closure.
+        let dirty: std::collections::HashMap<String, (i64, Option<i64>)> =
+            store.worktree_dirty_view().unwrap_or_default();
+        for row in worktrees.iter_mut() {
+            let p: Option<&str> = row.get("path").and_then(|v| v.as_str());
+            if let Some((count, last)) = p.and_then(|s| dirty.get(s)).copied() {
+                let obj = row.as_object_mut().expect("worktree row is an object");
+                obj.insert("dirty".into(), json!(count > 0));
+                obj.insert("dirty_events".into(), json!(count));
+                obj.insert(
+                    "last_dirty_ms".into(),
+                    Value::from(last),
+                );
+            }
+        }
         Ok(json!({
             "daemon": TOOL_NAME,
             "version": VERSION,

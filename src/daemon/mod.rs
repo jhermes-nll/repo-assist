@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
+pub mod bus;
 pub mod lock;
 
 use crate::config::Config;
@@ -73,6 +74,9 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     // Open the store (creating and migrating it if the file is absent).
     let store = Arc::new(Store::open(&db).map_err(|e| std::io::Error::other(e.to_string()))?);
 
+    // Task 2.3: start the worktree event bus (watcher + drain thread).
+    let bus = crate::daemon::bus::start_bus(store.clone(), repo_root);
+
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
 
@@ -91,17 +95,25 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+    // The accept arm's `Result` is the daemon body; the signal arms early-return. The
+    // select's non-`break` value is discarded here (all arms end the function one way).
     tokio::select! {
-        result = accept => result,
+        result = accept => { let _ = result; }
         _ = tokio::signal::ctrl_c() => {
             let _ = stop_tx.send(Some(0));
-            Ok(())
+            crate::daemon::bus::stop_bus(&bus);
+            return Ok(());
         }
         _ = sigterm.recv() => {
             let _ = stop_tx.send(Some(0));
-            Ok(())
+            crate::daemon::bus::stop_bus(&bus);
+            return Ok(());
         }
     }
+
+    // Normal exit (accept loop returned): stop the event bus too.
+    crate::daemon::bus::stop_bus(&bus);
+    Ok(())
 }
 
 /// Spawn this binary as a detached background daemon for the repo at `repo_root`
