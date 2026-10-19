@@ -304,4 +304,117 @@ impl Store {
             Ok(conn.last_insert_rowid())
         })
     }
+    /// One drifted file (Task 3): a path that changed in the plan's worktree but that no
+    /// task *expects* (`tasks.expected_paths`).
+    ///
+    /// See [`DriftFile`].
+    ///
+    /// The drift set for one plan (Task 3): the changed paths that no task expects.
+    ///
+    /// `changed` is the plan's worktree changed-file set (the `(path, origin)` pairs the git
+    /// source produces, e.g. [`crate::sources::git::changed_file_set`]). A path drifts when it
+    /// is not in the union of the plan's tasks' `expected_paths` (`tasks.expected_paths`, each
+    /// stored as a JSON array). Returns `None` when the plan does not exist; otherwise the
+    /// drifted rows, ordered by path (stable output for tests).
+    pub fn plan_drift_from_changed(
+        &self,
+        plan_id: &str,
+        changed: &[(String, String)],
+    ) -> Result<Option<Vec<DriftFile>>, StoreError> {
+        self.read(|conn| {
+            // The plan must exist; a plan row with no id of its own cannot drift.
+            let exists: i64 =
+                conn.query_row("SELECT COUNT(*) FROM plans WHERE id = ?1", [plan_id], |r| {
+                    r.get(0)
+                })?;
+            if exists == 0 {
+                return Ok(None);
+            }
+
+            // Union of the paths this plan's tasks expect (each `expected_paths` is a JSON
+            // array stored in `tasks.expected_paths`).
+            let mut expected: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            let mut task_stmt =
+                conn.prepare("SELECT expected_paths FROM tasks WHERE plan_id = ?1")?;
+            // Flatten the read handle: rows that fail to decode as a string are skipped.
+            for s in task_stmt
+                .query_map([plan_id], |r| r.get::<_, String>(0))?
+                .flatten()
+            {
+                if let Ok(paths) = serde_json::from_str::<serde_json::Value>(&s) {
+                    if let Some(arr) = paths.as_array() {
+                        for v in arr {
+                            if let Some(p) = v.as_str() {
+                                expected.insert(p.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Drift = changed paths not in the expected set, ordered by path.
+            let mut changed = changed.to_vec();
+            changed.sort_by(|a, b| a.0.cmp(&b.0));
+            let drift = changed
+                .into_iter()
+                .filter(|(path, _)| !expected.contains(path))
+                .map(|(path, origin)| DriftFile { path, origin })
+                .collect();
+            Ok(Some(drift))
+        })
+    }
+
+    /// The plan-to-worktree references the daemon drifts against (Task 3): one entry per
+    /// plan, paired with the worktree `plans.worktree_id` points at (path, branch, base ref).
+    ///
+    /// The daemon recomputes each worktree's changed-file set from live `git` output
+    /// (`crate::sources::git::changed_file_set`), then asks [`Store::plan_drift_from_changed`]
+    /// which of those paths no task expects. Plans with no worktree still appear here (with a
+    /// `None` path) so the daemon can skip them cheaply.
+    pub fn plan_worktrees(&self) -> Result<Vec<PlanWorktreeRef>, StoreError> {
+        self.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT p.id, p.worktree_id, wt.path, wt.branch, wt.base_ref
+                 FROM plans p
+                 LEFT JOIN worktrees wt ON wt.id = p.worktree_id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(PlanWorktreeRef {
+                    plan_id: row.get::<_, String>(0)?,
+                    worktree_id: row.get::<_, Option<i64>>(1)?,
+                    path: row.get::<_, Option<String>>(2)?,
+                    branch: row.get::<_, Option<String>>(3)?,
+                    base_ref: row.get::<_, Option<String>>(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+    }
+}
+
+/// One plan and the worktree it drifts against (Task 3).
+#[derive(Debug, Clone)]
+pub struct PlanWorktreeRef {
+    /// The plan id (`plans.id`).
+    pub plan_id: String,
+    /// The worktree id (`plans.worktree_id`); `None` when the plan has no worktree.
+    pub worktree_id: Option<i64>,
+    /// The worktree absolute path (`worktrees.path`). `None` when `worktree_id` is `None`.
+    pub path: Option<String>,
+    /// The worktree branch (`worktrees.branch`). `None` when detached.
+    pub branch: Option<String>,
+    /// The base ref used to compute the changed-file set (`worktrees.base_ref`). `None`
+    /// when unset.
+    pub base_ref: Option<String>,
+}
+
+/// One drifted file (Task 3): a path that changed in the plan's worktree but that no
+/// task *expects* (`tasks.expected_paths`).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DriftFile {
+    /// The changed path, relative to the worktree.
+    pub path: String,
+    /// Where the change was found: committed | staged | unstaged | untracked.
+    pub origin: String,
 }

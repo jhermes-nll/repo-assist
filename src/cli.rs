@@ -217,7 +217,7 @@ fn spec(cmd: &Command) -> Spec {
             task: 2,
         },
         Drift(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 3,
         },
         Conflicts(_) => Spec {
@@ -274,6 +274,7 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
         Command::Status(args) => run_status(&args),
         Command::Plans(args) => run_plans(&args),
         Command::Plan(args) => run_plan(&args),
+        Command::Drift(args) => run_drift(&args),
         _ => run_implemented(cli.command),
     }
 }
@@ -310,6 +311,44 @@ fn run_plan(args: &PlanArgs) -> Result<i32, anyhow::Error> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_plan_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra drift`: files changed in a plan's worktree that no plan task expects (Task 3) —
+/// auto-spawns the daemon, then prints a JSON array (or nothing) describing the drift.
+///
+/// Drift is reported per-plan: the daemon recomputes each plan's worktree changed-file set
+/// live (from `git`), then asks the store which changed paths no task expects. Plans with no
+/// worktree produce nothing.
+fn run_drift(args: &DriftArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(crate::ipc::Method::Drift, serde_json::Value::Null)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let rows: &[_] = result
+                    .get("drift")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                // Human output is terse: one line per drifted file, annotated with plan/worktree.
+                if rows.is_empty() {
+                    eprintln!("no drift");
+                }
+                for row in rows {
+                    let plan = row.get("plan").and_then(|v| v.as_str()).unwrap_or("?");
+                    let path = row.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                    let origin = row.get("origin").and_then(|v| v.as_str()).unwrap_or("");
+                    eprintln!("drift {plan}: {path} ({origin})");
+                }
             }
         }
         crate::ipc::Reply::Error { error, .. } => {

@@ -193,6 +193,11 @@ async fn dispatch_request(
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
         }
+        Method::Drift => {
+            let drift = tokio::task::block_in_place(|| plan_drift_value(store))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": drift })).await?;
+        }
         Method::Plan => {
             match req.params.get("id").and_then(Value::as_str) {
                 None => write_reply(
@@ -403,6 +408,62 @@ fn plan_json(store: &Store, id: &str) -> Result<Option<Value>, crate::store::Sto
             "tasks": tasks,
         })))
     })
+}
+
+/// Build the `Method::Drift` result (Task 3): every drifted file across all plans.
+///
+/// For each plan the daemon recomputes its worktree's changed-file set from live `git`
+/// output (via [`crate::sources::git::changed_file_set`]) and asks the store which changed
+/// paths no task expects (see [`Store::plan_drift_from_changed`]). Plans with no worktree are
+/// skipped. Output is ordered by plan id, then path (stable for tests).
+fn plan_drift_value(store: &Store) -> Result<Value, crate::store::StoreError> {
+    use crate::sources::git::changed_file_set;
+    let refs = store
+        .plan_worktrees()
+        .expect("read plan<->worktree references");
+
+    // Drift per plan: (plan_id, worktree_path, drifted_rows). Ordering is by plan id.
+    let mut per_plan: Vec<(String, String, Vec<crate::store::DriftFile>)> = Vec::new();
+    for r in refs {
+        // Skip plans that own no worktree: there is nothing to drift against.
+        let Some(path) = r.path else {
+            continue;
+        };
+        let changed = changed_file_set(
+            std::path::Path::new(&path),
+            r.branch.as_deref(),
+            r.base_ref.as_deref(),
+        );
+        if changed.is_empty() {
+            continue;
+        }
+        match store.plan_drift_from_changed(&r.plan_id, &changed) {
+            Ok(Some(drift)) => {
+                if !drift.is_empty() {
+                    per_plan.push((r.plan_id, path, drift));
+                }
+            }
+            Ok(None) => {}
+            Err(_) => {}
+        }
+    }
+    per_plan.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Emit the drifted files as a flat array, each annotated with its owning plan + worktree.
+    let rows: Vec<Value> = per_plan
+        .into_iter()
+        .flat_map(|(plan_id, worktree, drift)| {
+            drift.into_iter().map(move |f| {
+                json!({
+                    "plan": plan_id.clone(),
+                    "worktree": worktree.clone(),
+                    "path": f.path,
+                    "origin": f.origin,
+                })
+            })
+        })
+        .collect();
+    Ok(json!({ "drift": rows }))
 }
 
 /// Read a single JSON response line (Section 6), terminated by `\n`.

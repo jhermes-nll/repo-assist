@@ -218,7 +218,7 @@ pub fn sync_worktrees(store: &Store, repo_root: &Path) -> Result<(), crate::stor
                 .as_deref()
                 .and_then(|b| git(&wt.path, &["merge-base", b, h]).map(|s| s.trim().to_string()))
         });
-        let rows = changed_files(&wt.path, wt.branch.as_deref(), base_ref.as_deref());
+        let rows = changed_file_set(&wt.path, wt.branch.as_deref(), base_ref.as_deref());
         store.write(|conn| {
             let id: i64 = conn.query_row(
                 "SELECT id FROM worktrees WHERE path = ?1",
@@ -260,7 +260,15 @@ pub fn sync_worktrees(store: &Store, repo_root: &Path) -> Result<(), crate::stor
 
 /// The changed-file set of one worktree (Section 5/9):
 /// committed-vs-merge-base UNION staged UNION unstaged UNION untracked.
-fn changed_files(wt: &Path, branch: Option<&str>, base_ref: Option<&str>) -> Vec<(String, String)> {
+///
+/// Public so the daemon IPC handler can recompute a single plan's worktree changed set
+/// (Task 3) without re-syncing the whole repo. Ordering and tagging match the private
+/// `changed_files`, which now defers here for the internal sync path.
+pub fn changed_file_set(
+    wt: &Path,
+    branch: Option<&str>,
+    base_ref: Option<&str>,
+) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     // Committed changes on the branch vs merge base.
     if let Some(b) = base_ref {
