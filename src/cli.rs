@@ -509,7 +509,6 @@ fn run_status(args: &StatusArgs) -> Result<i32, anyhow::Error> {
     Ok(0)
 }
 
-/// Human-readable one-screen status output.
 /// `ra sessions`: known agent sessions (Task 4) — auto-spawns the daemon, then prints a
 /// table or JSON. Rows are refreshed by the daemon's sessions ticker, so output may trail
 /// the newest session file by up to ~60s (documented cadence, `daemon/sessions.rs`).

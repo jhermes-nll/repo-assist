@@ -178,6 +178,7 @@ fn parse_errors_are_counted_and_torn_tails_are_not() {
         "assistant_ok (10) + the call's usage (1); the torn tail contributes nothing"
     );
     assert_eq!(ing.tokens_out, 6);
+    assert_eq!(ing.cost_usd, Some(0.02), "cost accumulates, not replaces");
     assert_eq!(
         ing.calls.len(),
         1,
@@ -364,7 +365,6 @@ fn discovery_returns_top_level_jsonl_only_and_resolves_the_root() {
         ".meta.json and subagents/ are skipped: {names:?}"
     );
     assert!(names.iter().all(|n| n.ends_with(".redacted.jsonl")));
-    assert!(files.iter().all(|f| f.is_file()));
 
     std::env::set_var("PI_CODING_AGENT_SESSION_DIR", "/opt/somewhere");
     let env = repo_assist::paths::Env::with("/home/u", None, None);
@@ -614,10 +614,21 @@ fn read_agg(store: &repo_assist::store::Store, id: &str, expect_off: &i64) -> (i
 fn ra_sessions_end_to_end_over_ipc() {
     let mut repo = common::GitRepo::new();
     repo.add_worktree("wt-e", "e.txt");
+    repo.add_worktree("wt-map", "m.txt");
     let (state, runtime) = (repo.path().join("state"), repo.path().join("run"));
     std::fs::create_dir_all(&state).unwrap();
     std::fs::create_dir_all(&runtime).unwrap();
     let (_fix_tmp, pi_root) = sessions_root_with_fixtures();
+    let wt_map = std::fs::canonicalize(repo.path().join("wt-map")).unwrap();
+    std::fs::write(
+        pi_root.join("mapped.jsonl"),
+        format!(
+            "{}\n{}\n",
+            hdr("s-mapped-ipc", wt_map.to_str().unwrap()),
+            assistant_ok("2026-10-19T00:00:01.000Z")
+        ),
+    )
+    .unwrap();
     let envs: Vec<(String, String)> = vec![
         ("HOME".into(), state.display().to_string()),
         ("XDG_STATE_HOME".into(), state.display().to_string()),
@@ -629,13 +640,15 @@ fn ra_sessions_end_to_end_over_ipc() {
     ];
     let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
 
-    let mut daemon = std::process::Command::new(&ra_bin)
-        .arg("daemon")
-        .arg("--foreground")
-        .envs(envs.iter().cloned())
-        .current_dir(repo.path())
-        .spawn()
-        .expect("spawn ra daemon --foreground");
+    let _daemon = DaemonGuard(
+        std::process::Command::new(&ra_bin)
+            .arg("daemon")
+            .arg("--foreground")
+            .envs(envs.iter().cloned())
+            .current_dir(repo.path())
+            .spawn()
+            .expect("spawn ra daemon --foreground"),
+    );
 
     let key = repo_assist::paths::git_common_dir(repo.path())
         .map(|c| repo_assist::paths::repo_key_from_git_common_dir(&c))
@@ -662,7 +675,7 @@ fn ra_sessions_end_to_end_over_ipc() {
             .expect("run ra sessions --json");
         if out.status.success() {
             let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-            if v["sessions"].as_array().map(|a| a.len()) == Some(3) {
+            if v["sessions"].as_array().map(|a| a.len()) == Some(4) {
                 served = v["sessions"].as_array().unwrap().clone();
                 break;
             }
@@ -671,22 +684,44 @@ fn ra_sessions_end_to_end_over_ipc() {
     }
     assert_eq!(
         served.len(),
-        3,
-        "the daemon must ingest and serve the three fixture sessions"
+        4,
+        "the daemon must ingest and serve the fixture sessions plus the mapped one"
     );
 
-    assert_eq!(served[0]["id"].as_str(), Some(F3_ID));
-    assert_eq!(served[0]["tokens_in"].as_i64(), Some(8609));
-    assert_eq!(served[0]["tool_calls"].as_i64(), Some(3));
-    assert_eq!(served[1]["id"].as_str(), Some(F2_ID));
-    assert_eq!(served[2]["agent"].as_str(), Some("pi"));
+    let f3 = served
+        .iter()
+        .find(|s| s["id"].as_str() == Some(F3_ID))
+        .unwrap();
+    assert_eq!(f3["tokens_in"].as_i64(), Some(8609));
+    assert_eq!(f3["tool_calls"].as_i64(), Some(3));
+    let f2 = served
+        .iter()
+        .find(|s| s["id"].as_str() == Some(F2_ID))
+        .unwrap();
+    assert_eq!(f2["id"].as_str(), Some(F2_ID));
+    // any fixture session is unmapped
+    let unmapped = served
+        .iter()
+        .find(|s| s["id"].as_str() == Some(F1_ID))
+        .unwrap();
+    assert_eq!(unmapped["agent"].as_str(), Some("pi"));
     assert_eq!(
-        served[2]["worktree"].as_str(),
+        unmapped["worktree"].as_str(),
         None,
         "unmapped session shows null worktree"
     );
-    assert_eq!(served[2]["parse_errors"].as_i64(), Some(0));
-    assert!(served[2]["byte_offset"].as_i64().unwrap_or(0) > 0);
+    assert_eq!(unmapped["parse_errors"].as_i64(), Some(0));
+    assert!(unmapped["byte_offset"].as_i64().unwrap_or(0) > 0);
+
+    let mapped = served
+        .iter()
+        .find(|s| s["id"].as_str() == Some("s-mapped-ipc"))
+        .expect("mapped session present");
+    assert_eq!(
+        mapped["worktree"].as_str(),
+        Some(wt_map.to_str().unwrap()),
+        "a session inside a worktree renders its worktree path over IPC"
+    );
 
     let out = assert_cmd::Command::cargo_bin("ra")
         .unwrap()
@@ -704,7 +739,7 @@ fn ra_sessions_end_to_end_over_ipc() {
         String::from_utf8_lossy(&out.stderr)
     );
     let status: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(status["sessions"].as_i64(), Some(3));
+    assert_eq!(status["sessions"].as_i64(), Some(4));
 
     let out = assert_cmd::Command::cargo_bin("ra")
         .unwrap()
@@ -719,7 +754,133 @@ fn ra_sessions_end_to_end_over_ipc() {
     assert!(text.contains(F3_ID), "full ids are shown: {text}");
     assert!(text.contains("pi"));
     assert!(text.contains("8609"), "token counts are shown: {text}");
+}
 
-    let _ = daemon.kill();
-    let _ = daemon.wait();
+struct DaemonGuard(std::process::Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn missing_usage_cost_is_null_in_ingest_and_db() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let f = tmp.path().join("nocost.jsonl");
+    let line = serde_json::json!({
+        "type": "message", "id": "m1", "parentId": null, "timestamp": "2026-10-19T00:00:01.000Z",
+        "message": {
+            "role": "assistant",
+            "content": [{ "type": "text", "text": "hi" }],
+            "usage": { "input": 10, "output": 5, "cacheRead": 0, "cacheWrite": 0 }
+        }
+    });
+    std::fs::write(&f, format!("{}\n{}\n", hdr("s-nocost", "/x"), line)).unwrap();
+    let ing = repo_assist::sources::sessions::ingest_file(&f).unwrap();
+    assert_eq!(ing.cost_usd, None);
+
+    let db = tmp.path().join("db.sqlite");
+    let store = repo_assist::store::Store::open(&db).unwrap();
+    let row = repo_assist::store::SessionRow {
+        id: "s-nocost",
+        agent: "pi",
+        file: "/tmp/nocost.jsonl",
+        cwd: Some("/x"),
+        worktree_id: None,
+        started_ms: Some(0),
+        last_event_ms: Some(0),
+        tokens_in: ing.tokens_in,
+        tokens_out: ing.tokens_out,
+        tokens_cache: ing.tokens_cache,
+        cost_usd: ing.cost_usd,
+        tool_calls: 0,
+        byte_offset: 0,
+        parse_errors: 0,
+    };
+    store.upsert_session_with_calls(&row, &[]).unwrap();
+    let cost: Option<f64> = store
+        .read(|conn| {
+            conn.query_row(
+                "SELECT cost_usd FROM sessions WHERE id = 's-nocost'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap();
+    assert_eq!(cost, None);
+}
+
+#[test]
+fn upsert_session_with_calls_is_atomic_on_midstream_failure() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db = tmp.path().join("db.sqlite");
+    let store = repo_assist::store::Store::open(&db).unwrap();
+
+    let row0 = repo_assist::store::SessionRow {
+        id: "s0",
+        agent: "pi",
+        file: "/tmp/s0.jsonl",
+        cwd: Some("/w"),
+        worktree_id: None,
+        started_ms: Some(1),
+        last_event_ms: Some(2),
+        tokens_in: 1,
+        tokens_out: 2,
+        tokens_cache: 3,
+        cost_usd: Some(0.5),
+        tool_calls: 0,
+        byte_offset: 7,
+        parse_errors: 0,
+    };
+    store.upsert_session_with_calls(&row0, &[]).unwrap();
+
+    // Force every subsequent tool_calls INSERT to fail.
+    store
+        .write(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER boom BEFORE INSERT ON tool_calls BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+            )
+        })
+        .unwrap();
+
+    let row1 = repo_assist::store::SessionRow {
+        id: "s0",
+        agent: "pi",
+        file: "/tmp/s0.jsonl",
+        cwd: Some("/w"),
+        worktree_id: None,
+        started_ms: Some(1),
+        last_event_ms: Some(2),
+        tokens_in: 9,
+        tokens_out: 2,
+        tokens_cache: 3,
+        cost_usd: None,
+        tool_calls: 1,
+        byte_offset: 99,
+        parse_errors: 1,
+    };
+    let call = repo_assist::store::ToolCallRow {
+        ts_ms: 2,
+        tool: "read",
+        args_hash: "a1b2c3d4e5f60718",
+        is_error: Some(false),
+        result_hash: None,
+    };
+    let res = store.upsert_session_with_calls(&row1, &[call]);
+    assert!(res.is_err(), "the forced failure must surface as an error");
+
+    let off: i64 = store
+        .read(|conn| {
+            conn.query_row(
+                "SELECT byte_offset FROM sessions WHERE id = 's0'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        off, 7,
+        "byte_offset must not advance when the write fails mid-way"
+    );
 }

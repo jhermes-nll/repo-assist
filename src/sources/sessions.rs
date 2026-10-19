@@ -1,6 +1,10 @@
 //! Agent session source (Task 4 / Section 8.2): parse pi session JSONL files into
 //! `sessions` + `tool_calls` aggregates. Files are only ever READ — the daemon never
 //! writes inside any work tree, and that includes session files.
+//!
+//! Header placement: `ingest_file` accepts the first `type:"session"` header line
+//! anywhere in the file; `sync` separately enforces "header on line 1" via
+//! `read_session_id` and skips files lacking it without writing a byte offset.
 
 use std::path::{Path, PathBuf};
 
@@ -274,8 +278,24 @@ pub fn sync_sessions(store: &Store, repo_root: &Path, sessions_root: &Path) {
             eprintln!("sessions sync: cannot stat {}: skipped", file.display());
             continue;
         };
+        let raw = match std::fs::read_to_string(&file) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "sessions sync: cannot read {}: {e}: skipped",
+                    file.display()
+                );
+                continue;
+            }
+        };
         let size = meta.len() as i64;
         let Some(id) = read_session_id(&file) else {
+            if !raw.trim().is_empty() {
+                eprintln!(
+                    "sessions sync: cannot parse session header in {}: skipped",
+                    file.display()
+                );
+            }
             continue;
         };
         if offsets.get(&id) == Some(&size) {

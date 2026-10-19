@@ -264,13 +264,15 @@ fn ra_plans_and_plan_over_ipc() {
     // Spawn the daemon foreground. Keep it alive for the whole test — the client commands
     // below connect to this daemon's socket (`--foreground` does not detach), which avoids
     // the auto-spawn path (which would `current_exe()` the test binary and fail).
-    let mut daemon = std::process::Command::new(ra_bin)
-        .envs(envs.iter().cloned())
-        .current_dir(repo_root)
-        .arg("daemon")
-        .arg("--foreground")
-        .spawn()
-        .expect("spawn ra daemon --foreground");
+    let _daemon = DaemonGuard(
+        std::process::Command::new(ra_bin)
+            .envs(envs.iter().cloned())
+            .current_dir(repo_root)
+            .arg("daemon")
+            .arg("--foreground")
+            .spawn()
+            .expect("spawn ra daemon --foreground"),
+    );
     // Ensure the daemon is up and its socket exists before driving the CLI.
     let sock = sock_dir.join("repo-assist").join(format!("{key}.sock"));
     for _ in 0..50 {
@@ -374,10 +376,6 @@ fn ra_plans_and_plan_over_ipc() {
         combined.contains("not found") || combined.contains("socket closed"),
         "unknown plan should be rejected, got: {combined}"
     );
-
-    // Clean up the foreground daemon.
-    let _ = daemon.kill();
-    let _ = daemon.wait();
 }
 
 /// Seed one plan, two tasks, and two evidence rows into the opened store.
@@ -452,4 +450,12 @@ fn repo_isolate(repo_path: &std::path::Path) -> Vec<(String, String)> {
         ("XDG_STATE_HOME".into(), state.display().to_string()),
         ("XDG_RUNTIME_DIR".into(), runtime.display().to_string()),
     ]
+}
+
+struct DaemonGuard(std::process::Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

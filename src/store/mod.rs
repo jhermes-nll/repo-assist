@@ -335,16 +335,21 @@ impl Store {
             Ok(conn.last_insert_rowid())
         })
     }
-    /// Upsert one `sessions` row and REPLACE its `tool_calls` rows in a single write
-    /// transaction (Task 4): per-file atomicity — readers never see half a session. A
-    /// file rewritten with a different session id drops the previous row (`file` match).
+    /// Upsert one `sessions` row and REPLACE its `tool_calls` rows.
+    ///
+    /// All statements run inside a single `unchecked_transaction` on the writer
+    /// connection, committed only at the end: a failure mid-way rolls back the session
+    /// row (including byte_offset) together with its tool_calls, so readers never see
+    /// a session marked up-to-date with stale/missing tool_calls. A file rewritten
+    /// with a different session id drops the previous row (`file` match).
     pub fn upsert_session_with_calls(
         &self,
         row: &SessionRow<'_>,
         calls: &[ToolCallRow<'_>],
     ) -> Result<(), StoreError> {
         self.write(|conn| {
-            conn.execute(
+            let tx = conn.unchecked_transaction()?;
+            tx.execute(
                 "INSERT INTO sessions(id, agent, file, cwd, worktree_id, started_ms, last_event_ms, tokens_in, tokens_out, tokens_cache, cost_usd, tool_calls, byte_offset, parse_errors) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, file=excluded.file, cwd=excluded.cwd, worktree_id=excluded.worktree_id, started_ms=excluded.started_ms, last_event_ms=excluded.last_event_ms, tokens_in=excluded.tokens_in, tokens_out=excluded.tokens_out, tokens_cache=excluded.tokens_cache, cost_usd=excluded.cost_usd, tool_calls=excluded.tool_calls, byte_offset=excluded.byte_offset, parse_errors=excluded.parse_errors",
                 rusqlite::params![
                     row.id, row.agent, row.file, row.cwd, row.worktree_id,
@@ -354,21 +359,22 @@ impl Store {
                 ],
             )?;
             // A rewritten file may carry a different session id: clean up stale rows' calls first.
-            conn.execute(
+            tx.execute(
                 "DELETE FROM tool_calls WHERE session_id IN (SELECT id FROM sessions WHERE file = ?1 AND id <> ?2)",
                 rusqlite::params![row.file, row.id],
             )?;
-            conn.execute(
+            tx.execute(
                 "DELETE FROM sessions WHERE file = ?1 AND id <> ?2",
                 rusqlite::params![row.file, row.id],
             )?;
-            conn.execute("DELETE FROM tool_calls WHERE session_id = ?1", [row.id])?;
+            tx.execute("DELETE FROM tool_calls WHERE session_id = ?1", [row.id])?;
             for c in calls {
-                conn.execute(
+                tx.execute(
                     "INSERT INTO tool_calls(session_id, ts_ms, tool, args_hash, is_error, result_hash) VALUES (?1,?2,?3,?4,?5,?6)",
                     rusqlite::params![row.id, c.ts_ms, c.tool, c.args_hash, c.is_error, c.result_hash],
                 )?;
             }
+            tx.commit()?;
             Ok(())
         })
     }
