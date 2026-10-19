@@ -188,6 +188,41 @@ async fn dispatch_request(
             stop_tx.send(Some(0)).ok();
             return Ok(true);
         }
+        Method::Plans => {
+            let result = tokio::task::block_in_place(|| plans_json(store))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
+        Method::Plan => {
+            match req.params.get("id").and_then(Value::as_str) {
+                None => write_reply(
+                    stream,
+                    &json!({ "id": req.id, "error": {
+                        "code": "invalid_params", "message": "missing 'id'" } }),
+                )
+                .await?,
+                Some(id) => {
+                    let found = tokio::task::block_in_place(|| plan_json(store, id))
+                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    match found {
+                        Some(result) => {
+                            write_reply(
+                                stream,
+                                &json!({ "id": req.id, "result": result }),
+                            )
+                            .await?;
+                        }
+                        None => write_reply(
+                            stream,
+                            &json!({ "id": req.id, "error": {
+                                "code": "not_found",
+                                "message": format!("no plan '{}'", id) } }),
+                        )
+                        .await?,
+                    }
+                }
+            }
+        }
         other => write_reply(
             stream,
             &json!({ "id": req.id, "error": { "code": "not_implemented", "message": format!("method '{other}' is not yet implemented") } }),
@@ -257,6 +292,116 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
             "open_findings": open_findings,
             "sessions": sessions,
         }))
+    })
+}
+
+/// Build the `Method::Plans` result: one summary row per plan (Task 2.4).
+fn plans_json(store: &Store) -> Result<Value, crate::store::StoreError> {
+    store.read(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.source, p.title, p.file, p.worktree_id, p.state, p.first_seen_ms,              p.last_seen_ms, COALESCE(COUNT(t.id), 0) AS task_count,              COALESCE(SUM(CASE WHEN t.declared = 'done' THEN 1 ELSE 0 END), 0) AS declared_done,              COALESCE(SUM(CASE WHEN t.observed = 'done' THEN 1 ELSE 0 END), 0) AS observed_done              FROM plans p LEFT JOIN tasks t ON t.plan_id = p.id              GROUP BY p.id ORDER BY p.last_seen_ms DESC",
+        )?;
+        let mut plans: Vec<Value> = Vec::new();
+        for r in stmt.query_map([], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "source": row.get::<_, String>(1)?,
+                "title": row.get::<_, String>(2)?,
+                "file": row.get::<_, Option<String>>(3)?,
+                "worktree_id": row.get::<_, Option<i64>>(4)?,
+                "state": row.get::<_, String>(5)?,
+                "first_seen_ms": row.get::<_, Option<i64>>(6)?,
+                "last_seen_ms": row.get::<_, Option<i64>>(7)?,
+                "task_count": row.get::<_, i64>(8)?,
+                "declared_done": row.get::<_, i64>(9)?,
+                "observed_done": row.get::<_, i64>(10)?,
+            }))
+        })? {
+            plans.push(r?);
+        }
+        Ok(json!({ "plans": plans }))
+    })
+}
+
+/// Build the `Method::Plan` result: the plan by id with its tasks (ordered by ordinal) and
+/// each task's evidence (ordered by ts_ms). Returns `None` when no plan has that id.
+fn plan_json(store: &Store, id: &str) -> Result<Option<Value>, crate::store::StoreError> {
+    store.read(|conn| {
+        let plan = conn.query_row(
+            "SELECT id, source, title, file, worktree_id, state, first_seen_ms, last_seen_ms              FROM plans WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            },
+        )?;
+        let (id, source, title, file, worktree_id, state, first_seen_ms, last_seen_ms) =
+            plan;
+        // Tasks for this plan, ordered by ordinal.
+        let mut task_stmt = conn.prepare(
+            "SELECT id, ordinal, title, declared, expected_paths, depends_on, observed, observed_reason \
+             FROM tasks WHERE plan_id = ?1 ORDER BY ordinal",
+        )?;
+        let mut tasks: Vec<Value> = Vec::new();
+        for t in task_stmt.query_map([id.to_string()], |row| {
+            let expected: String = row.get(4)?;
+            let depends: String = row.get(5)?;
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "ordinal": row.get::<_, i64>(1)?,
+                "title": row.get::<_, String>(2)?,
+                "declared": row.get::<_, String>(3)?,
+                "expected_paths": serde_json::from_str(&expected).unwrap_or(Value::Array(Vec::new())),
+                "depends_on": serde_json::from_str(&depends).unwrap_or(Value::Array(Vec::new())),
+                "observed": row.get::<_, String>(6)?,
+                "observed_reason": row.get::<_, Option<String>>(7)?,
+            }))
+        })? {
+            let mut task = t?;
+            let task_id: String = task["id"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            // Evidence for this task, ordered by ts_ms.
+            let mut ev_stmt = conn.prepare(
+                "SELECT id, kind, ref, ts_ms, confidence FROM evidence WHERE task_id = ?1 ORDER BY ts_ms",
+            )?;
+            let mut evidence: Vec<Value> = Vec::new();
+            for e in ev_stmt.query_map([task_id.as_str()], |row| {
+                Ok(json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "kind": row.get::<_, String>(1)?,
+                    "ref": row.get::<_, String>(2)?,
+                    "ts_ms": row.get::<_, i64>(3)?,
+                    "confidence": row.get::<_, String>(4)?,
+                }))
+            })? {
+                evidence.push(e?);
+            }
+            if let Some(obj) = task.as_object_mut() {
+                obj.insert("evidence".into(), json!(evidence));
+            }
+            tasks.push(task);
+        }
+        Ok(Some(json!({
+            "id": id,
+            "source": source,
+            "title": title,
+            "file": file,
+            "worktree_id": worktree_id,
+            "state": state,
+            "first_seen_ms": first_seen_ms,
+            "last_seen_ms": last_seen_ms,
+            "tasks": tasks,
+        })))
     })
 }
 

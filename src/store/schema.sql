@@ -1,4 +1,4 @@
--- repo-assist store schema (PRAGMA user_version = 1). See plan section 5.
+-- repo-assist store schema (PRAGMA user_version = 2). See plan section 5.
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
@@ -112,3 +112,4 @@ CREATE INDEX IF NOT EXISTS idx_plans_state ON plans(state);
 CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_findings_state ON findings(state);
+CREATE INDEX IF NOT EXISTS idx_evidence_task ON evidence(task_id);

@@ -8,6 +8,8 @@
 
 use clap::{Args, Parser, Subcommand};
 
+use serde_json::Value;
+
 /// repo-assist — advisory, read-only git coordination daemon.
 #[derive(Parser, Debug)]
 #[command(
@@ -207,12 +209,12 @@ fn spec(cmd: &Command) -> Spec {
             task: 5,
         },
         Plans(_) => Spec {
-            implemented: false,
-            task: 3,
+            implemented: true,
+            task: 2,
         },
         Plan(_) => Spec {
-            implemented: false,
-            task: 3,
+            implemented: true,
+            task: 2,
         },
         Drift(_) => Spec {
             implemented: false,
@@ -270,7 +272,100 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
     match cli.command {
         Command::Daemon(args) => run_daemon(&args),
         Command::Status(args) => run_status(&args),
+        Command::Plans(args) => run_plans(&args),
+        Command::Plan(args) => run_plan(&args),
         _ => run_implemented(cli.command),
+    }
+}
+
+/// `ra plans`: list plans (Task 2.4) — auto-spawns the daemon, then prints a table or JSON.
+fn run_plans(args: &PlansArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(crate::ipc::Method::Plans, serde_json::Value::Null)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_plans_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra plan <id>`: a single plan with its tasks and evidence (Task 2.4).
+fn run_plan(args: &PlanArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(
+        crate::ipc::Method::Plan,
+        serde_json::json!({ "id": args.id }),
+    )?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_plan_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// Human-readable `ra plans` output.
+fn print_plans_human(s: &serde_json::Value) {
+    println!("{:<12}  {:<6}  TITLE", "PLAN", "STATE");
+    if let Some(list) = s.get("plans").and_then(|v| v.as_array()) {
+        for p in list {
+            println!(
+                "{:<12}  {:<6}  {}  ({} task(s), {} done)",
+                p.get("id").and_then(Value::as_str).unwrap_or("?"),
+                p.get("state").and_then(Value::as_str).unwrap_or("-"),
+                p.get("title").and_then(Value::as_str).unwrap_or(""),
+                p.get("task_count").and_then(Value::as_i64).unwrap_or(0),
+                p.get("declared_done").and_then(Value::as_i64).unwrap_or(0),
+            );
+        }
+    }
+}
+
+/// Human-readable `ra plan <id>` output.
+fn print_plan_human(s: &serde_json::Value) {
+    println!(
+        "plan  {} ({})",
+        s.get("id").and_then(Value::as_str).unwrap_or("?"),
+        s.get("state").and_then(Value::as_str).unwrap_or("-")
+    );
+    println!(
+        "  title:   {}",
+        s.get("title").and_then(Value::as_str).unwrap_or("")
+    );
+    if let Some(tasks) = s.get("tasks").and_then(|v| v.as_array()) {
+        for t in tasks {
+            println!(
+                "  {:>2}. {} [{}]",
+                t.get("ordinal").and_then(Value::as_i64).unwrap_or(0),
+                t.get("title").and_then(Value::as_str).unwrap_or(""),
+                t.get("declared").and_then(Value::as_str).unwrap_or("todo"),
+            );
+            if let Some(evs) = t.get("evidence").and_then(|v| v.as_array()) {
+                for e in evs {
+                    println!(
+                        "       - {} ({}) via {}",
+                        e.get("kind").and_then(Value::as_str).unwrap_or(""),
+                        e.get("confidence").and_then(Value::as_str).unwrap_or(""),
+                        e.get("ref").and_then(Value::as_str).unwrap_or(""),
+                    );
+                }
+            }
+        }
     }
 }
 

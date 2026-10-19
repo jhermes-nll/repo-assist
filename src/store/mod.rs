@@ -60,6 +60,43 @@ pub struct Store {
 /// A synchronous write transaction against a [`Store`].
 pub type WriteTxn<'a> = rusqlite::Transaction<'a>;
 
+/// One row to upsert into `plans` (Task 2.4). Keyed on `id`.
+#[derive(Debug, Clone)]
+pub struct PlanRow<'a> {
+    pub id: &'a str,
+    pub source: &'a str,
+    pub title: &'a str,
+    pub file: Option<&'a str>,
+    pub worktree_id: Option<i64>,
+    pub content_hash: Option<&'a str>,
+    pub state: &'a str,
+}
+
+/// One row to upsert into `tasks` (Task 2.4). Keyed on `id`.
+#[derive(Debug, Clone)]
+pub struct TaskRow<'a> {
+    pub id: &'a str,
+    pub plan_id: &'a str,
+    pub ordinal: i64,
+    pub title: &'a str,
+    pub declared: &'a str,
+    /// Serialized to the `expected_paths` JSON array column (see `upsert_task`).
+    pub expected_paths: &'a [String],
+    /// Serialized to the `depends_on` JSON array column.
+    pub depends_on: &'a [String],
+}
+
+/// One row to append to `evidence` (Task 2.4). No natural key — always inserted, never
+/// upserted, so the full history is preserved under its `ON DELETE CASCADE` FK.
+#[derive(Debug, Clone)]
+pub struct EvidenceRow<'a> {
+    pub task_id: &'a str,
+    pub kind: &'a str,
+    pub reference: &'a str, // `ref` is a Rust keyword; the column is still named `ref`
+    pub ts_ms: i64,
+    pub confidence: &'a str,
+}
+
 impl Store {
     /// Open (or create and migrate) the database at `path`.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
@@ -198,6 +235,73 @@ impl Store {
                 out.insert(path, (count, last));
             }
             Ok(out)
+        })
+    }
+
+    /// Persist one `plans` row, keyed on `id` (Task 2.4).
+    ///
+    /// `first_seen_ms` is set on first insert and left untouched on conflict; `last_seen_ms`
+    /// is always refreshed to `now_ms`.
+    pub fn upsert_plan(&self, row: &PlanRow<'_>, now_ms: i64) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO plans(id, source, title, file, worktree_id, content_hash, state, first_seen_ms, last_seen_ms)                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(id) DO UPDATE SET source = excluded.source, title = excluded.title, file = excluded.file, worktree_id = excluded.worktree_id, content_hash = excluded.content_hash, state = excluded.state, last_seen_ms = excluded.last_seen_ms",
+                rusqlite::params![
+                    row.id,
+                    row.source,
+                    row.title,
+                    row.file,
+                    row.worktree_id,
+                    row.content_hash,
+                    row.state,
+                    now_ms,
+                    now_ms,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Persist one `tasks` row, keyed on `id` (Task 2.4).
+    ///
+    /// Deliberately does NOT touch `observed`/`observed_reason` on conflict — those columns
+    /// are owned by the (future) drift/derive step, not by whatever calls `upsert_task`.
+    pub fn upsert_task(&self, row: &TaskRow<'_>) -> Result<(), StoreError> {
+        let expected =
+            serde_json::to_string(row.expected_paths).unwrap_or_else(|_| "[]".to_string());
+        let depends_on = serde_json::to_string(row.depends_on).unwrap_or_else(|_| "[]".to_string());
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO tasks(id, plan_id, ordinal, title, declared, expected_paths, depends_on)                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(id) DO UPDATE SET ordinal = excluded.ordinal, title = excluded.title, declared = excluded.declared, expected_paths = excluded.expected_paths, depends_on = excluded.depends_on",
+                rusqlite::params![
+                    row.id,
+                    row.plan_id,
+                    row.ordinal,
+                    row.title,
+                    row.declared,
+                    expected,
+                    depends_on,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Append one `evidence` row (Task 2.4); returns its row id. No natural key — always
+    /// inserted, so re-importing a plan must not overwrite existing evidence.
+    pub fn append_evidence(&self, row: &EvidenceRow<'_>) -> Result<i64, StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO evidence(task_id, kind, ref, ts_ms, confidence)                  VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    row.task_id,
+                    row.kind,
+                    row.reference,
+                    row.ts_ms,
+                    row.confidence,
+                ],
+            )?;
+            Ok(conn.last_insert_rowid())
         })
     }
 }
