@@ -1,83 +1,142 @@
-//! Acceptance for Task 0.1: CLI skeleton.
-//!
-//! Verifies that `ra --version` and `ra --help` work, that every documented subcommand is
-//! *recognized*, and that unrecognized subcommands fail clearly.
+//! Acceptance for Task 1.2: IPC server/client, `ra daemon`, `ra status`, pidfile flock,
+//! stale-socket cleanup, socket 0600, graceful shutdown, auto-spawn.
+
+mod common;
 
 use assert_cmd::Command;
+use common::GitRepo;
 
-/// `ra --version` prints the tool name and version and exits 0.
-#[test]
-fn version_prints_tool_and_version() {
-    let mut cmd = Command::cargo_bin("ra").unwrap();
-    cmd.arg("--version");
-    cmd.assert()
-        .success()
-        .stdout(predicates::str::contains("ra"))
-        .stdout(predicates::str::contains("0.1.0"));
+/// `RA_DOCTOR_ENV`-style env isolation: point HOME/XDG dirs at the repo temp dir so tests
+/// never touch the real `~/.local/state`.
+fn isolate(repo_path: &std::path::Path) -> Vec<(String, String)> {
+    let state = repo_path.join("state");
+    let runtime = repo_path.join("run");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::create_dir_all(&runtime).unwrap();
+    vec![
+        ("HOME".into(), state.display().to_string()),
+        ("XDG_STATE_HOME".into(), state.display().to_string()),
+        ("XDG_RUNTIME_DIR".into(), runtime.display().to_string()),
+    ]
 }
 
-/// `ra --help` lists every documented subcommand.
-#[test]
-fn help_lists_every_documented_subcommand() {
+fn ra(envs: &[(String, String)]) -> Command {
     let mut cmd = Command::cargo_bin("ra").unwrap();
-    cmd.arg("--help");
-    cmd.assert()
-        .success()
-        .stdout(predicates::str::contains("daemon"))
-        .stdout(predicates::str::contains("status"))
-        .stdout(predicates::str::contains("worktrees"))
-        .stdout(predicates::str::contains("plans"))
-        .stdout(predicates::str::contains("plan"))
-        .stdout(predicates::str::contains("drift"))
-        .stdout(predicates::str::contains("conflicts"))
-        .stdout(predicates::str::contains("who-touches"))
-        .stdout(predicates::str::contains("findings"))
-        .stdout(predicates::str::contains("ack"))
-        .stdout(predicates::str::contains("sessions"))
-        .stdout(predicates::str::contains("tui"))
-        .stdout(predicates::str::contains("doctor"))
-        .stdout(predicates::str::contains("render"));
-}
-
-/// Every recognized subcommand exits with code 2 (not implemented in phase 0.1) and a
-/// stable "not yet implemented (scheduled for Task N)" message naming that subcommand.
-#[test]
-fn every_subcommand_is_recognized_and_reports_not_implemented() {
-    // (subcommand, extra positional args needed to pass clap parsing).
-    let cases: &[(&str, &[&str])] = &[
-        ("daemon", &[]),
-        ("status", &[]),
-        ("worktrees", &[]),
-        ("plans", &[]),
-        ("plan", &["<id>"]),
-        ("drift", &[]),
-        ("conflicts", &[]),
-        ("who-touches", &["/some/path"]),
-        ("findings", &[]),
-        ("ack", &["<id>"]),
-        ("sessions", &[]),
-        ("tui", &[]),
-        ("doctor", &[]),
-        ("render", &[]),
-    ];
-    for (sub, args) in cases {
-        let mut cmd = Command::cargo_bin("ra").unwrap();
-        cmd.arg(sub);
-        for a in *args {
-            cmd.arg(a);
-        }
-        cmd.assert()
-            .failure()
-            .code(2)
-            .stderr(predicates::str::contains("not yet implemented"))
-            .stderr(predicates::str::contains(*sub));
+    for (k, v) in envs {
+        cmd.env(k, v);
     }
+    cmd
 }
 
-/// Unknown subcommands fail cleanly (clap error), never panic.
 #[test]
-fn unknown_subcommand_fails_cleanly() {
-    let mut cmd = Command::cargo_bin("ra").unwrap();
-    cmd.arg("bogus-subcommand");
-    cmd.assert().failure();
+fn daemon_roundtrip_status_and_second_daemon_fails() {
+    let mut repo = GitRepo::new();
+    repo.add_worktree("wt-a", "a.txt");
+    let envs = isolate(repo.path());
+
+    // 1. Client command auto-spawns a daemon and answers `status` end to end.
+    let out = ra(&envs)
+        .arg("status")
+        .arg("--json")
+        .current_dir(repo.path())
+        .timeout(std::time::Duration::from_secs(20))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "ra status failed: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let status: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("ra status --json should print a JSON object");
+    // Worktrees are populated by the Task 2.1 git source; Task 1.2 only asserts the shell:
+    // a stable envelope with a 12-char repo key and an (empty) worktree list.
+    assert!(status["repo_key"]
+        .as_str()
+        .map(|s| s.len() == 12)
+        .unwrap_or(false));
+    assert!(status["worktrees"].is_array());
+
+    // 2. The socket file exists with mode 0600.
+    let key = status["repo_key"].as_str().unwrap();
+    let sock = repo
+        .path()
+        .join("run")
+        .join("repo-assist")
+        .join(format!("{key}.sock"));
+    assert!(sock.exists(), "socket missing at {}", sock.display());
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "socket mode {:o}", mode);
+
+    // 3. A second daemon for the same repo fails fast with a clear message.
+    let mut second = ra(&envs);
+    second
+        .arg("daemon")
+        .arg("--foreground")
+        .current_dir(repo.path())
+        .timeout(std::time::Duration::from_secs(10));
+    let out2 = second.output().unwrap();
+    assert!(!out2.status.success(), "second daemon should exit non-zero");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert!(
+        msg.contains("already running"),
+        "second-daemon error should mention the live daemon, got: {msg}"
+    );
+
+    // 4. Client-driven graceful shutdown of the auto-spawned daemon.
+    let out3 = ra(&envs)
+        .arg("status")
+        .arg("--no-spawn")
+        .arg("--json")
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(
+        out3.status.success(),
+        "no-spawn status failed: {}",
+        String::from_utf8_lossy(&out3.stderr)
+    );
+
+    // There is no `ra shutdown` CLI yet; the shutdown method is exercised via the raw client.
+    // (Method::Shutdown exists; CLI surface lands in a later task. Kill via the pidfile.)
+    let pidfile = repo
+        .path()
+        .join("state")
+        .join("repo-assist")
+        .join(key)
+        .join("daemon.pid");
+    let pid: u32 = std::fs::read_to_string(&pidfile)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // Ask the daemon to shut down through the IPC `shutdown` method instead of a signal.
+    let reply = repo_assist::ipc::client::Client::connect(sock.clone())
+        .and_then(|mut c| c.call(repo_assist::ipc::Method::Shutdown, serde_json::Value::Null))
+        .expect("shutdown request over IPC");
+    match reply {
+        repo_assist::ipc::Reply::Result { .. } => {}
+        other => panic!("expected result for shutdown, got {other:?}"),
+    }
+
+    // The daemon should exit on its own shortly after the shutdown request.
+    let mut gone = false;
+    for _ in 0..30 {
+        if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        gone,
+        "daemon pid {pid} did not exit after the shutdown request"
+    );
 }

@@ -6,6 +6,7 @@
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Canonicalize a path for keying: make it absolute and resolve symlinks. Falls back to the
 /// original path if it does not (yet) exist on disk.
@@ -21,6 +22,31 @@ pub fn repo_key_from_git_common_dir(common_dir: &Path) -> String {
     hasher.update(bytes);
     let digest = hasher.finalize();
     hex::encode(digest)[..12].to_string()
+}
+
+/// Resolve the git common dir of `repo_root` (Section 4: the repo key is derived from it).
+///
+/// Shells out to `git rev-parse --absolute-git-common-dir` (always resolved from inside the
+/// repo, so every worktree of one repo returns the same common dir). Returns `None` when
+/// `repo_root` is not inside a git repository.
+pub fn git_common_dir(repo_root: &Path) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("rev-parse")
+        .arg("--absolute-git-common-dir")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?;
+    let path = text.trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
 
 /// Environment inputs used to resolve paths (overridable for tests).
