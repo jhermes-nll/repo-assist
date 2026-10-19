@@ -8,7 +8,7 @@ use repo_assist::store::{Store, StoreError, SCHEMA_VERSION};
 
 /// Run a git-less `sqlite3` command on `db_path` to set the schema version, if sqlite3 exists.
 fn set_user_version(db_path: &Path, version: u32) {
-    if !Command::new("sqlite3").arg("--version").output().is_ok() {
+    if Command::new("sqlite3").arg("--version").output().is_err() {
         eprintln!("sqlite3 not available; skipping version-mismatch test");
         return;
     }
@@ -89,7 +89,7 @@ fn missing_database_is_an_error_by_default() {
 
 #[test]
 fn newer_schema_version_is_refused() {
-    if !Command::new("sqlite3").arg("--version").output().is_ok() {
+    if Command::new("sqlite3").arg("--version").output().is_err() {
         eprintln!("sqlite3 not available; skipping newer-version test");
         return;
     }
