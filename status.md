@@ -30,6 +30,8 @@ Local, advisory, always-on daemon (`ra`) that watches a git repository across al
 | `findings` | Conflicts / drift / stalls (dedupe_key, kind, severity, subject, summary, state, first/last_seen, resolved_ms). |
 | `events` | Generic audit log (source, kind, subject, payload). |
 
+Ingest model (sessions/tool_calls): root discovered from `PI_CODING_AGENT_SESSION_DIR` / `PI_CODING_AGENT_DIR` / `$HOME/.pi/agent/sessions`; daemon ticker rescan every 60s (first pass immediately); changed files (by byte size) are fully re-parsed, unchanged files skip on the size cursor; a session whose cwd falls inside no known worktree maps to no worktree (NULL `worktree_id`), never force-joined; session files are read only.
+
 Key public types:
 
 - `PlanRow { id, source, title, file, worktree_id, content_hash, state }`
@@ -54,14 +56,14 @@ Public store methods (subset): `open` / `open_with`, `read`, `write`, `append_ev
 | `ra who-touches` | no | 5 |
 | `ra findings` | no | 5 |
 | `ra ack` | no | 5 |
-| `ra sessions` | no | 4 |
+| `ra sessions` | yes | 4 |
 | `ra tui` | no | 5 |
 | `ra doctor` | no | 5 |
 | `ra render` | no | 2 |
 
 ## RPC methods (per `src/ipc/server.rs`)
 
-Implemented: `Hello`, `Ping`, `Status`, `stop`, `Plans`, `Plan`, `Drift`.
+Implemented: `Hello`, `Ping`, `Status`, `Shutdown`, `Plans`, `Plan`, `Drift`, `Sessions`.
 Not yet: conflicts, findings handlers.
 
 ## Test suite (all green)
@@ -69,7 +71,7 @@ Not yet: conflicts, findings handlers.
 | File | Tests | Covers |
 |---|---:|---|
 | `cli.rs` | 1 | CLI wiring |
-| `config.rs` | 0 | config load |
+| `config.rs` | 7 | config load |
 | `fswatch.rs` | 2 | fs watcher |
 | `git_repo.rs` | 3 | git repo ops |
 | `git_source.rs` | 7 | changed-file sets |
@@ -77,8 +79,9 @@ Not yet: conflicts, findings handlers.
 | `task_2_3.rs` | 2 | worktree event bus |
 | `task_2_4.rs` | 3 | plans data model + IPC |
 | `task_3.rs` | 3 | **drift** (drifts when a task doesn't expect it, reports nothing otherwise, unknown plan -> None) |
+| `task_4.rs` | 12 | Task 4 acceptance: pi session source, ingest, worktree mapping, `ra sessions` end-to-end |
 
-`cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` — all clean.
+The crate's three baseline defects (clippy `nonminimal_bool` in `tests/store.rs`; a Linux-only `/proc` liveness probe that made the second-daemon check fail off-Linux; a macOS tmpdir path-form assumption in `tests/task_2_3.rs`) were repaired in the three `fix(...)` commits listed below, each verified by its own gate. The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (per-suite: cli 1, config 7, fswatch 2, git_repo 3, git_source 7, store 3, task_2_3 2, task_2_4 3, task_3 3, task_4 12).
 
 ## Commits on `main`
 
@@ -91,13 +94,22 @@ Not yet: conflicts, findings handlers.
 | `5163673` | Task 2.3 - worktree event bus (watcher -> store -> status) |
 | `9201ce8` | Task 2.4 - plans data model (store CRUD -> IPC -> `ra plans`/`ra plan`) |
 | `1e1915b` | **Task 3.5 - `plan_drift_from_changed` store method; RPC `Drift` handler; `ra drift [--json]` CLI** |
+| `002b59c` | fix(clippy): `.is_err()` for the sqlite3 availability guards (nonminimal_bool) |
+| `950d996` | fix(daemon): take the flock before writing the pidfile; drop `/proc` pre-check |
+| `292c026` | fix(test): canonicalize the worktree key (macOS /private tmpdir paths) |
+| `75f7434` | Task 4: pi session source -> sessions store -> RPC Sessions -> ra sessions [--json] |
+| `a28b553` | fix(task-4): atomic session upsert + review follow-ups |
 
-Latest commit: `1e1915b21b8e970c2e49d7d0003fe63a7e665a5f` (2026-10-19).
+Latest commit: `a28b5534` (2026-10-19).
 
 ## Status summary
 
-**Done:** daemon + `status` (T1), plans data model + `ra plans`/`ra plan` (T2), and **drift** — `ra drift [--json]` recomputes each plan's worktree changed set live, unions the tasks' `expected_paths`, and reports the remainder (T3).
+**Done:** daemon + `status` (T1), plans data model + `ra plans`/`ra plan` (T2), **drift** — `ra drift [--json]` recomputes each plan's worktree changed set live, unions the tasks' `expected_paths`, and reports the remainder (T3), and **sessions** — pi session source -> sessions store -> RPC `Sessions` -> `ra sessions [--json]` (T4).
 
-**Backlog (per `Spec`):** Task 4 (`ra sessions`) and Task 5 (`ra worktrees`, `ra conflicts`, `ra who-touches`, `ra findings`, `ra ack`, `ra tui`, `ra doctor`, `ra render`).
+**Backlog (per `Spec`):** Task 5 (`ra worktrees`, `ra conflicts`, `ra who-touches`, `ra findings`, `ra ack`, `ra tui`, `ra doctor`, `ra render`).
+
+**Repaired before Task 4:** the three baseline fixes (clippy guards; lock-first pidfile ordering + portable test wait; canonicalized tmpdir key) — `002b59c`, `950d996`, `292c026`.
+
+**Plan:** `docs/superpowers/plans/2026-10-19-repo-assist-task-4-sessions.md`.
 
 **Note:** Conflicts and Findings are CLI commands declared in the spec table, but no daemon handler, store method (`plan_conflicts` / `plan_findings`), or CLI runner exists yet — they return the `implemented: false` stub.
