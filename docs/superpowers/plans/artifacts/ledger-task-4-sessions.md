@@ -84,6 +84,36 @@ a28b553 fix(task-4): atomic session upsert + review follow-ups
 
 Amended `artifacts/evidence-repo-assist-task-4-sessions.md`: the original E62 claimed `Busy` is returned "on ALL platforms" — **over-absolute**. Added an `E62 CORRECTION` row recording the exact exception (the winner's lock→write window), that impact is message-quality only, that the one-daemon invariant is untouched, and that fs2's Windows `LockFileEx` path means the guarantee is Unix-bounded in practice.
 
+## Fix round 2 (`fbc823e`) — findings from the fix-round review
+
+Deep review of `5750247`/`8c9d941` returned **APPROVED, 0 must-fix**, with 2 SHOULD-FIX + 4 nits. Sonnet sign-off `SIGNOFF: APPROVE`.
+
+**F6 (real silent regression):** `tests/task_3.rs:134` ran `PRAGMA wal_checkpoint(TRUNCATE)` *inside* a `store.write` closure that had already executed an `UPDATE`. Once `5750247` made `Store::write` a genuine transaction, that checkpoint returned `"database table is locked"` and the `.ok()` **swallowed it silently** — the checkpoint stopped happening with no signal. **Fixed:** deleted after proving it was not load-bearing (test passes 3/3 without it; the follow-up read sees committed WAL rows), and the stale comment replaced with one explaining the trap. **No `.ok()` error-swallowing remains anywhere in `tests/`** (verified by grep).
+
+**F7 (benign but fragile):** `tests/task_2_4.rs:259` retains its checkpoint — proven still working (busy=0, WAL truncated) because that closure has no writes. Added an explicit write-free constraint comment naming the failure mode.
+
+**Nits applied:** store doc attribution ("supplied by `Store::write`"); lock loop no longer tail-sleeps after the final read; `Flock` wording now distinguishes the self-pid case; `lock.rs` module doc gained a Solaris qualifier (fs2 0.4.3 emulates `flock` via `fcntl` there — the very hazard the note warns about) and the Unix-only note. `WriteTxn` deliberately left as-is.
+
+**Verified on `fbc823e`:** fmt clean; clippy exit 0; `cargo test` **44 passed / 0 failed**; task_3 3/3; task_2_4 3/3; no stray daemons; tree clean.
+
+**Process correction (orchestrator):** the earlier verification recorded "no PRAGMA/VACUUM inside a closure" — but it grepped **`src/` only**, missing two **test** call sites. The claim was stated globally when it was source-only. The deep reviewer caught the scope error.
+
+## Commits this session (repo-assist, all local)
+
+```
+002b59c  fix(clippy): .is_err() for the sqlite3 availability guards                          [baseline]
+950d996  fix(daemon): take the flock before writing the pidfile; drop /proc pre-check          [baseline]
+292c026  fix(test): canonicalize the worktree key (macOS /private tmpdir paths)               [baseline]
+75f7434  Task 4: pi session source -> sessions store -> RPC Sessions -> ra sessions [--json]  [feature]
+a28b553  fix(task-4): atomic session upsert + review follow-ups                                [review 1]
+5ee66cc  docs: status.md — Task 4 recorded, baseline-repair commits recorded, stale claims corrected  [docs]
+5750247  fix(F1/F2): transactional Store::write; drop inner tx from upsert_session_with_calls [review 2]
+8c9d941  fix(F3,F4): bounded pidfile re-read + reworded fallback; pin flock(2) in module doc   [review 2]
+fbc823e  fix(F6,F7): resolve swallowed checkpoint; nits (lock loop/wording/Solaris; store doc) [review 3]
+```
+
+**All local. `git push` has NOT been run. Nothing merged or pushed to `origin`.**
+
 ## Nothing pushed
 
 All six commits are **local only** on `main`, per the user's decision. `git push` has NOT been run. Nothing has been merged or pushed to `origin`.
