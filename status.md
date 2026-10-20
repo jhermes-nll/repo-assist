@@ -137,6 +137,6 @@ Latest commit: `396760a` (2026-10-20).
 ## Known limitations
 
 - Known limitation: bare `ra findings` (neither `--open` nor `--all`) applies no state filter, so resolved rows appear alongside open ones.
-- Pre-existing, unfixed stale-socket brick: `IpcError::NotRunning` is returned only when the socket path is absent; a stale `daemon.sock` (path present, no listener) surfaces `IpcError::Connect`, and `resolve_sock`'s match bails on that instead of removing the stale socket and spawning, so `ra status`/`ra render`/`ra tui` fail with "Connection refused" and never spawn a daemon. Pre-existing and unfixed.
-- Pre-existing, unfixed `is_error` NULL failure: `src/store/mod.rs` `TC.is_error` is a non-Option `bool` and the loader does `is_error: row.get(2)?` against the nullable `tool_calls.is_error INTEGER`, so any stored tool call with NULL `is_error` makes `ra`'s findings check fail every tick (`findings: check_workspace failed: sqlite error: Invalid column type Null at index: 2, name: is_error`), leaving `ra findings` returning empty/stale data. Pre-existing and unfixed.
-- These two defects block `ra render`/`ra tui` from working against a repo with a stale socket.
+- Stale-socket brick fixed: `UnixStream::connect` failures with `ErrorKind::ConnectionRefused` are now classified as `IpcError::Stale`, and `resolve_sock` removes the stale socket and pidfile before spawning. Other connect errors still surface.
+- `is_error` NULL fixed: `TC.is_error` is now `Option<bool>`; `checks/mod.rs` coerces with `unwrap_or(false)`, so NULL rows no longer break `check_workspace`.
+- The `ra findings` default-state limitation above (still unfixed) remains.

@@ -862,7 +862,7 @@ pub struct SessionInfo {
 pub struct TC {
     pub tool: String,
     pub args_hash: String,
-    pub is_error: bool,
+    pub is_error: Option<bool>,
     pub ts_ms: i64,
 }
 

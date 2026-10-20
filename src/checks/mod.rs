@@ -534,7 +534,7 @@ fn check_agent_loop(ctx: &CheckCtx) -> Vec<FindingCandidate> {
         for c in recent {
             let key = format!("{}:{}", c.tool, c.args_hash);
             *counts.entry(key.clone()).or_insert(0) += 1;
-            if c.is_error {
+            if c.is_error.unwrap_or(false) {
                 *error_counts.entry(key.clone()).or_insert(0) += 1;
             }
         }

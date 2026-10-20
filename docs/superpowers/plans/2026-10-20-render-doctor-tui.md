@@ -152,6 +152,24 @@ Same three gates, plus manual: `ra tui` in a scratch repo with a live daemon —
 4. **`ra render` output when nothing changed.** **Recommendation: succeed with an empty written list and exit 0**, printing "no changes". Non-zero would break daemon callers.
 5. **`ra doctor` when no daemon is running.** **Recommendation: `Warn`, exit 0** — absence is the normal pre-first-use state, not a failure.
 
+## Task 4 — fix two pre-existing defects (user-approved after smoke-testing)
+
+Both were found by running the real binary, not by the test suite, and both block the three commands above from working against a real repo.
+
+### 4a — a stale socket bricks every client command
+
+`src/ipc/client.rs:44-50` returns `IpcError::NotRunning` **only** when the socket path is absent. A socket that exists with nothing listening returns `IpcError::Connect(...)`, and `src/cli.rs:521` bails on anything that is not `NotRunning` — before the spawn arm. Result: one uncleanly-killed daemon disables `ra status`, `ra render`, `ra tui` and every other client command until the socket file is deleted by hand.
+
+**Fix:** distinguish a *stale* socket from a genuinely broken one. When `UnixStream::connect` fails with `ErrorKind::ConnectionRefused`, classify it as stale; remove the stale socket and pidfile, then take the existing spawn path. Any other `Connect` cause (EACCES, wrong file type) must still surface as an error rather than triggering a spawn.
+
+### 4b — NULL `tool_calls.is_error` breaks the findings engine
+
+`src/store/mod.rs:862` declares `TC.is_error: bool` and loads it with `row.get(2)?` from the nullable `tool_calls.is_error INTEGER` (`src/store/schema.sql:82`), while `src/sources/sessions.rs:34` and `src/store/mod.rs:129` use `Option<bool>`. Any stored tool call with NULL `is_error` makes `check_workspace` fail on **every tick**, so `ra findings` returns empty data — and the TUI's Findings tab and `views/FINDINGS.md` are empty as a consequence.
+
+**Fix:** make `TC.is_error: Option<bool>` and coerce at `src/checks/mod.rs:537` (`c.is_error.unwrap_or(false)`). Treat a NULL as "no error recorded", which is what the column means.
+
+**Verify:** the three gates; a regression test for each (a stale socket file present on disk → the command spawns and succeeds rather than exiting 2; a store seeded with a NULL `is_error` row → `check_workspace` succeeds and findings are produced); and a manual `ra render` proving `views/FINDINGS.md` is no longer empty on the real repo.
+
 ## Out of scope
 
 `subscribe`/`RenderViews` streaming beyond the force-render RPC; `sysinfo` process metrics; README and `docs/agents-snippet.md` from Task 5.1's file list (that is Task 5.1's documentation half and deserves its own pass); the 7 ai-dashboard clippy lints (different repo).

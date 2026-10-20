@@ -16,6 +16,9 @@ pub enum IpcError {
     /// No daemon is listening at the expected socket (Section 6).
     #[error("no daemon running at {0}")]
     NotRunning(String),
+    /// The daemon socket exists but no listener is bound (stale socket).
+    #[error("stale daemon socket at {0}")]
+    Stale(String),
     /// The daemon socket could not be connected to.
     #[error("could not connect to the daemon at {0}: {1}")]
     Connect(String, String),
@@ -46,8 +49,13 @@ impl Client {
         if !sock.exists() {
             return Err(IpcError::NotRunning(sock.display().to_string()));
         }
-        let mut stream = UnixStream::connect(&sock)
-            .map_err(|e| IpcError::Connect(sock.display().to_string(), e.to_string()))?;
+        let mut stream = match UnixStream::connect(&sock) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                return Err(IpcError::Stale(sock.display().to_string()))
+            }
+            Err(e) => return Err(IpcError::Connect(sock.display().to_string(), e.to_string())),
+        };
         let to = std::time::Duration::from_secs(3);
         let _ = stream.set_read_timeout(Some(to));
         let _ = stream.set_write_timeout(Some(to));

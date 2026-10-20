@@ -518,14 +518,24 @@ fn resolve_sock(spawn: bool) -> Result<std::path::PathBuf, anyhow::Error> {
     let connect_err = |e: crate::ipc::client::IpcError| e.to_string();
     match crate::ipc::client::Client::connect(sock.clone()) {
         Ok(_) => Ok(sock),
-        Err(e) if !matches!(e, crate::ipc::client::IpcError::NotRunning(_)) => Err(
-            anyhow::anyhow!("connecting to the daemon: {}", connect_err(e)),
-        ),
-        Err(_) if !spawn => Err(anyhow::anyhow!(
-            "no daemon running at {} (pass a spawnable command or start `ra daemon` manually)",
-            sock.display()
-        )),
-        Err(_) => {
+        Err(e)
+            if matches!(
+                e,
+                crate::ipc::client::IpcError::NotRunning(_)
+                    | crate::ipc::client::IpcError::Stale(_)
+            ) =>
+        {
+            if let crate::ipc::client::IpcError::Stale(_) = &e {
+                let _ = std::fs::remove_file(&sock);
+                let state_files = env.state_files(&repo_key);
+                let _ = std::fs::remove_file(&state_files.pid);
+            }
+            if !spawn {
+                return Err(anyhow::anyhow!(
+                    "no daemon running at {} (pass a spawnable command or start `ra daemon` manually)",
+                    sock.display()
+                ));
+            }
             let mut child = crate::daemon::spawn_detached(&cwd)
                 .map_err(|e| anyhow::anyhow!("spawning the daemon: {e}"))?;
             let ok = crate::daemon::wait_for_socket(&sock, std::time::Duration::from_secs(5))
@@ -536,6 +546,10 @@ fn resolve_sock(spawn: bool) -> Result<std::path::PathBuf, anyhow::Error> {
             }
             Ok(sock)
         }
+        Err(e) => Err(anyhow::anyhow!(
+            "connecting to the daemon: {}",
+            connect_err(e)
+        )),
     }
 }
 
