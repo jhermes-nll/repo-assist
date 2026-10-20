@@ -96,7 +96,7 @@ These are all real bugs found by adversarial review in this repo. Each cost a re
 - **TDD.** Write the failing test, confirm it is red, implement, confirm green. Report the **red output verbatim** — a test that passes both before and after proves nothing.
 - **Verify by running, not reasoning.** Run the stated command and paste real output.
 - **One commit per task**, body naming the verify command and its result.
-- **Commit locally only: NEVER `git push`.** The user has not authorized a push and explicitly wants local-only commits on this repo.
+- **One commit per task, then push it.** `git push origin main` after each task's gate passes. Pushing per-task keeps the remote reviewable incrementally and stops one bad task from contaminating the rest. If a push is rejected, STOP and report — do not force, merge, or rebase.
 - **Keep the tree clean.** No stray `ra daemon` processes. `ps ax | grep "[r]a daemon"` should be empty when you're done for the night.
 - **Check the premise.** If the plan's diagnosis turns out wrong when you read the code, say so with evidence rather than implementing something you believe is incorrect.
 
@@ -121,7 +121,7 @@ Baseline to preserve and grow: **44 passing**. Add tests; never remove or weaken
 - **Blocked on something a human must decide → skip it, log it clearly, proceed with what's unblocked.**
 - **A task fails twice → stop attempting it, log the exact error, move to the next task.** Do not grind.
 - **Never leave the tree broken.** If a task ends half-done, either finish it or revert that task's changes so the tree stays buildable.
-- **Never push, never force-push, never rewrite history.**
+- **Push per task; NEVER force-push, never rewrite history.** No `--force`, no `--force-with-lease`, no `--tags`, no `--all`, no `--mirror`, no amend of a pushed commit. If the remote has commits you don't have, STOP and report — that needs a human.
 
 **Suggested order** (dependency-aware — the findings engine unblocks several commands):
 1. Findings engine + its checks (§9), with the `findings` table lifecycle. Biggest piece; unblocks the rest.
@@ -141,6 +141,9 @@ If you get through 1–5, that is a strong night's work.
 ```
 ## TASKS COMPLETE
 <each>: <done | partial | skipped> — <commit sha> — <verify command + ACTUAL result>
+
+## PUSHES
+<per task: commit sha -> pushed? (yes/no) — remote sha after>
 
 ## FINDINGS ENGINE
 <the kinds you implemented; which §9 rules are live; anything not implemented and why>
@@ -166,7 +169,7 @@ cargo fmt --check / clippy / cargo test: <real output, real counts>
 
 - **Repo:** `/Users/jesse/Developer/repos/repo-assist` only. You may *read* `/Users/jesse/Developer/repos/ai-dashboard` for reference but must not modify it.
 - **Do NOT read or dump real pi transcript contents** into logs, commits, or reports — they contain the user's private data. The redacted fixtures at `tests/fixtures/pi/*.redacted.jsonl` are the sanctioned test inputs; **never use the raw `.jsonl` ones**.
-- **Do not `git push`.** Do not install global tooling.
+- **Push per completed task** (`git push origin main`), never force-push. **Do not install global tooling.**
 - **Do not add a dependency** without a justification in the commit message. The plan's §3 lists the intended set.
 - Do not commit `target/`.
 - `docs/ra.1.md` needs updating only if a command's flags actually change — say so if you do.
