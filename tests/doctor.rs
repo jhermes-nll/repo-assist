@@ -161,3 +161,28 @@ fn json_shape() {
     assert!(first.get("status").is_some());
     assert!(first.get("detail").is_some());
 }
+
+#[test]
+fn invalid_config_exits_one_and_names_file() {
+    let repo = common::GitRepo::new();
+    std::fs::write(repo.path().join(".repo-assist.toml"), "unknown_key = 1\n").unwrap();
+    let state = tempfile::TempDir::new().unwrap();
+    let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
+    let out = std::process::Command::new(&ra_bin)
+        .arg("doctor")
+        .arg("--json")
+        .env("HOME", "/tmp")
+        .env("XDG_STATE_HOME", state.path())
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let arr = v.as_array().expect("bare array");
+    let cfg = arr.iter().find(|c| c["name"] == "config validity").unwrap();
+    assert_eq!(cfg["status"], "fail");
+    assert!(cfg["detail"]
+        .as_str()
+        .unwrap()
+        .contains(".repo-assist.toml"));
+}

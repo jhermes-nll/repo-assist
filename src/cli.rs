@@ -407,26 +407,14 @@ fn run_doctor(args: &DoctorArgs) -> Result<i32, anyhow::Error> {
     let env = Env::from_real();
     let (checks, exit) = match crate::config::Config::load(&cwd, &env.home) {
         Ok(c) => {
-            let checks = crate::doctor::run_all(&env, &cwd, &c);
+            let checks = crate::doctor::run_all(&env, &cwd, Ok(&c));
             let fail = checks
                 .iter()
                 .any(|ch| matches!(ch.status, crate::doctor::CheckStatus::Fail));
             (checks, if fail { 1 } else { 0 })
         }
         Err(e) => {
-            let mut checks =
-                crate::doctor::run_all(&env, &cwd, &crate::config::Config::default_config());
-            if let Some(last) = checks.last_mut() {
-                if last.name == "config validity" {
-                    let _ = last;
-                }
-            }
-            // Replace the trailing config-validity entry without matching by name string.
-            let detail = e;
-            if let Some(slot) = checks.last_mut() {
-                slot.status = crate::doctor::CheckStatus::Fail;
-                slot.detail = detail;
-            }
+            let checks = crate::doctor::run_all(&env, &cwd, Err(e.as_str()));
             (checks, 1)
         }
     };

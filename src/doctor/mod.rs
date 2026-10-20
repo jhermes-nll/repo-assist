@@ -24,26 +24,37 @@ pub struct Check {
     pub detail: String,
 }
 
-pub fn run_all(env: &Env, repo_path: &Path, cfg: &Config) -> Vec<Check> {
-    let common = crate::paths::git_common_dir(repo_path);
-    if common.is_none() {
+pub fn run_all(env: &Env, repo_path: &Path, cfg_result: Result<&Config, &str>) -> Vec<Check> {
+    let Some(common) = crate::paths::git_common_dir(repo_path) else {
         return vec![Check {
             name: "git repository",
             status: CheckStatus::Fail,
             detail: format!("not a git repository: {}", repo_path.display()),
         }];
-    }
-    let repo_key = crate::paths::repo_key_from_git_common_dir(common.as_ref().unwrap());
+    };
+    let repo_key = crate::paths::repo_key_from_git_common_dir(&common);
+    let cfg = match cfg_result {
+        Ok(c) => c,
+        Err(_) => &Config::default_config(),
+    };
+    let config_check = match cfg_result {
+        Ok(_) => Check {
+            name: "config validity",
+            status: CheckStatus::Ok,
+            detail: "loaded (or defaults)".to_string(),
+        },
+        Err(msg) => Check {
+            name: "config validity",
+            status: CheckStatus::Fail,
+            detail: msg.to_string(),
+        },
+    };
     vec![
         git_version_check(),
         state_dir_writable(env, &repo_key),
         socket_reachable(env, &repo_key),
         adapter_roots(env, cfg),
-        Check {
-            name: "config validity",
-            status: CheckStatus::Ok,
-            detail: "loaded".to_string(),
-        },
+        config_check,
     ]
 }
 
