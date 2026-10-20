@@ -10,6 +10,8 @@ pub(crate) mod migrations;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use serde_json::Value;
+
 /// Errors surfaced by the store layer (thiserror in library modules).
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -486,6 +488,393 @@ impl Store {
             rows.collect::<Result<Vec<_>, _>>()
         })
     }
+    /// The complete check workspace (§9): everything a run of checks needs, loaded
+    /// from the store. `worktrees` carry their changed-file set (computed live from
+    /// `git`), `sessions` carry their `tool_calls`, and per-worktree last activity is
+    /// derived from the `events` table (the `last_activity_ms` column stays NULL because
+    /// the event bus only persists `worktree_dirty` events).
+    pub fn check_workspace(&self) -> Result<CheckWorkspace, StoreError> {
+        self.read(|conn| {
+            let mut wts = Vec::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT id, path, branch, head, base_ref, merge_base, is_main, present                      FROM worktrees ORDER BY path",
+                )?;
+                let rows = stmt.query_map([], |row| Ok(WtInfo {
+                    id: row.get::<_, i64>(0)?,
+                    path: row.get::<_, String>(1)?,
+                    branch: row.get(2)?,
+                    head: row.get(3)?,
+                    base_ref: row.get(4)?,
+                    merge_base: row.get(5)?,
+                    is_main: row.get(6)?,
+                    present: row.get(7)?,
+                    changed: Vec::new(),
+                }))?;
+                for r in rows { wts.push(r?); }
+            }
+            // Recompute each worktree's changed-file set from live git (as sync_worktrees).
+            for wt in &mut wts {
+                wt.changed = crate::sources::git::changed_file_set(
+                    std::path::Path::new(&wt.path),
+                    wt.branch.as_deref(),
+                    wt.base_ref.as_deref(),
+                );
+            }
+            let mut plans = Vec::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT id, source, title, worktree_id, state FROM plans ORDER BY id",
+                )?;
+                let rows = stmt.query_map([], |row| Ok(PlanInfo {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    title: row.get(2)?,
+                    worktree_id: row.get(3)?,
+                    state: row.get(4)?,
+                }))?;
+                for r in rows { plans.push(r?); }
+            }
+            let mut tasks = Vec::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT id, plan_id, ordinal, title, declared, expected_paths, depends_on, observed, observed_reason FROM tasks ORDER BY plan_id, ordinal",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    let expected: String = row.get(5)?;
+                    let depends: String = row.get(6)?;
+                    Ok(TaskInfo {
+                        id: row.get(0)?,
+                        plan_id: row.get(1)?,
+                        ordinal: row.get(2)?,
+                        title: row.get(3)?,
+                        declared: row.get(4)?,
+                        expected_paths: serde_json::from_str(&expected).unwrap_or(Vec::new()),
+                        depends_on: serde_json::from_str(&depends).unwrap_or(Vec::new()),
+                        observed: row.get(7)?,
+                        observed_reason: row.get(8)?,
+                    })
+                })?;
+                for r in rows { tasks.push(r?); }
+            }
+            let mut sessions = Vec::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT id, agent, last_event_ms, tokens_in, tokens_out, tokens_cache, cost_usd, tool_calls                      FROM sessions ORDER BY id",
+                )?;
+                let rows = stmt.query_map([], |row| Ok(SessionInfo {
+                    id: row.get(0)?,
+                    agent: row.get(1)?,
+                    last_event_ms: row.get(2)?,
+                    tokens_in: row.get(3)?,
+                    tokens_out: row.get(4)?,
+                    tokens_cache: row.get(5)?,
+                    cost_usd: row.get(6)?,
+                    tool_calls: Vec::new(),
+                }))?;
+                for mut s in rows.flatten() {
+                    let sid = s.id.clone();
+                    let mut cs = Vec::new();
+                    let mut cs_stmt = conn.prepare(
+                        "SELECT tool, args_hash, is_error, ts_ms FROM tool_calls WHERE session_id = ?1 ORDER BY ts_ms"
+                    )?;
+                    for c in cs_stmt.query_map([sid.as_str()], |row| Ok(TC {
+                        tool: row.get(0)?,
+                        args_hash: row.get(1)?,
+                        is_error: row.get(2)?,
+                        ts_ms: row.get(3)?,
+                    }))? { cs.push(c?); }
+                    s.tool_calls = cs;
+                    sessions.push(s);
+                }
+            }
+            // Per-worktree last activity from the events table (last_activity_ms is always NULL).
+            let mut activity = std::collections::HashMap::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT subject, MAX(ts_ms) FROM events WHERE source='worktree' AND kind='worktree_dirty' GROUP BY subject"
+                )?;
+                let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))?;
+                for row in rows.flatten() { activity.insert(row.0, row.1); }
+            }
+            Ok(CheckWorkspace { worktrees: wts, plans, tasks, sessions, activity })
+        })
+    }
+
+    /// Reconcile a fresh run of all checks (`candidates`) against the persisted findings,
+    /// applying the lifecycle (§5): open new findings, refresh open/ack findings, resolve
+    /// findings that no longer fire, reopen resolved findings that reappear. Returns the
+    /// opened/resolved deltas so the daemon can emit finding_opened/finding_resolved events.
+    pub fn sync_findings(
+        &self,
+        candidates: Vec<FindingCandidate>,
+        now_ms: i64,
+    ) -> Result<Vec<FindingDelta>, StoreError> {
+        let mut best: std::collections::HashMap<String, FindingCandidate> =
+            std::collections::HashMap::new();
+        // De-duplicate candidates on `dedupe_key` (the column is UNIQUE): when several checks
+        // produce the same key (e.g. overlap<wtA>:<wtB> computed from either order, or a
+        // merge-tree pair given in either head order), keep the most-severe view.
+        for c in candidates {
+            match best.get(&c.dedupe_key) {
+                Some(existing)
+                    if severity_rank(&existing.severity) >= severity_rank(&c.severity) => {}
+                _ => {
+                    best.insert(c.dedupe_key.clone(), c);
+                }
+            }
+        }
+        self.write(|conn| {
+            let mut stmt = conn.prepare("SELECT id, dedupe_key, kind, severity, subject, summary, evidence, confidence, state, first_seen_ms, last_seen_ms, resolved_ms FROM findings")?;
+            let mut current: std::collections::HashMap<String, FindingRow> = std::collections::HashMap::new();
+            for r in stmt.query_map([], |row| Ok(FindingRow {
+                id: row.get(0)?, dedupe_key: row.get(1)?, kind: row.get(2)?, severity: row.get(3)?,
+                subject: row.get(4)?, summary: row.get(5)?,
+                evidence: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or(Value::Null),
+                confidence: row.get(7)?, state: row.get(8)?, first_seen_ms: row.get(9)?,
+                last_seen_ms: row.get(10)?, resolved_ms: row.get(11)?,
+            }))? {
+                let f = r?;
+                current.insert(f.dedupe_key.clone(), f);
+            }
+            let mut deltas: Vec<FindingDelta> = Vec::new();
+            for (key, cand) in &best {
+                let key = key.clone();
+                match current.get(key.as_str()) {
+                    None => {
+                        conn.execute(
+                            "INSERT INTO findings(dedupe_key, kind, severity, subject, summary, evidence, confidence, state, first_seen_ms, last_seen_ms, resolved_ms)                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8, ?8, NULL)",
+                            rusqlite::params![key.clone(), cand.kind, cand.severity, cand.subject, cand.summary,
+                                serde_json::to_string(&cand.evidence).unwrap_or_else(|_| "{}".to_string()),
+                                cand.confidence, now_ms])?;
+                        deltas.push(FindingDelta { opened: true, dedupe_key: key, kind: cand.kind.clone(), subject: cand.subject.clone(), severity: cand.severity.clone() });
+                    }
+                    _ => {
+                        conn.execute(
+                            "UPDATE findings SET kind = ?2, severity = ?3, subject = ?4, summary = ?5,                              evidence = ?6, confidence = ?7, state = 'open', last_seen_ms = ?8, resolved_ms = NULL                              WHERE dedupe_key = ?1",
+                            rusqlite::params![key.clone(), cand.kind, cand.severity, cand.subject, cand.summary,
+                                serde_json::to_string(&cand.evidence).unwrap_or_else(|_| "{}".to_string()),
+                                cand.confidence, now_ms])?;
+                        deltas.push(FindingDelta { opened: true, dedupe_key: key, kind: cand.kind.clone(), subject: cand.subject.clone(), severity: cand.severity.clone() });
+                    }
+                }
+            }
+            for (key, row) in &current {
+                if best.contains_key(key.as_str()) { continue; }
+                let was_open = row.state != "acked" && row.state != "resolved";
+                conn.execute("UPDATE findings SET state = 'resolved', last_seen_ms = ?2, resolved_ms = ?2 WHERE dedupe_key = ?1", rusqlite::params![key.clone(), now_ms])?;
+                if was_open {
+                    deltas.push(FindingDelta { opened: false, dedupe_key: key.clone(), kind: row.kind.clone(), subject: row.subject.clone(), severity: row.severity.clone() });
+                }
+            }
+            Ok(deltas)
+        })
+    }
+
+    /// Persist one finding candidate (used by tests and by non-transactional callers).
+    pub fn upsert_finding(&self, cand: &FindingCandidate, now_ms: i64) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO findings(dedupe_key, kind, severity, subject, summary, evidence, confidence, state, first_seen_ms, last_seen_ms, resolved_ms)                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8, ?8, NULL)                  ON CONFLICT(dedupe_key) DO UPDATE SET kind = excluded.kind, severity = excluded.severity,                  subject = excluded.subject, summary = excluded.summary, evidence = excluded.evidence,                  confidence = excluded.confidence, state = 'open', last_seen_ms = excluded.last_seen_ms, resolved_ms = NULL",
+                rusqlite::params![cand.dedupe_key, cand.kind, cand.severity, cand.subject, cand.summary,
+                    serde_json::to_string(&cand.evidence).unwrap_or_else(|_| "{}".to_string()),
+                    cand.confidence, now_ms])?;
+            Ok(())
+        })
+    }
+
+    /// List findings (§9), optionally restricted to `--open` (only state='open') or `--all`
+    /// (any state), optionally filtered by `kind`. Ordered by severity (error first) then key.
+    pub fn list_findings(&self, filter: &FindingsFilter) -> Result<Vec<FindingRow>, StoreError> {
+        self.read(|conn| {
+            let kind_filter = filter.kind.as_deref().unwrap_or("");
+            let mut sql = String::from(
+                "SELECT id, dedupe_key, kind, severity, subject, summary, evidence, confidence,                  state, first_seen_ms, last_seen_ms, resolved_ms FROM findings");
+            let mut cond = String::from("1 = 1");
+            if filter.all {} else if filter.open { cond.push_str(" AND state = 'open'"); }
+            if !kind_filter.is_empty() { cond.push_str(" AND kind = ?3"); }
+            sql.push_str(&format!(" WHERE {cond} ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, dedupe_key"));
+            let mut stmt = conn.prepare(&sql)?;
+            let params = if kind_filter.is_empty() { rusqlite::params![] } else { rusqlite::params![kind_filter] };
+            let rows = stmt.query_map(params, |row| Ok(FindingRow {
+                id: row.get(0)?, dedupe_key: row.get(1)?, kind: row.get(2)?, severity: row.get(3)?,
+                subject: row.get(4)?, summary: row.get(5)?,
+                evidence: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or(Value::Null),
+                confidence: row.get(7)?, state: row.get(8)?, first_seen_ms: row.get(9)?,
+                last_seen_ms: row.get(10)?, resolved_ms: row.get(11)?,
+            }))?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+    }
+
+    /// Acknowledge one finding by row id (§7): sets state='acked' and refreshes last_seen_ms.
+    pub fn ack_finding(&self, id: &str, now_ms: i64) -> Result<bool, StoreError> {
+        self.write(|conn| {
+            let n = conn.execute(
+                "UPDATE findings SET state = 'acked', last_seen_ms = ?2 WHERE id = ?1",
+                rusqlite::params![id, now_ms],
+            )?;
+            Ok(n > 0)
+        })
+    }
+}
+/// Find the row id of one finding on its `dedupe_key` (§9); returns None when it does not exist.
+pub fn finding_id(
+    conn: &rusqlite::Connection,
+    dedupe_key: &str,
+) -> Result<Option<i64>, rusqlite::Error> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM findings WHERE dedupe_key = ?1",
+            [dedupe_key],
+            |row| row.get(0),
+        )
+        .ok())
+}
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "error" => 2,
+        "warn" => 1,
+        _ => 0,
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FindingRow {
+    pub id: i64,
+    pub dedupe_key: String,
+    pub kind: String,
+    pub severity: String,
+    pub subject: String,
+    pub summary: String,
+    pub evidence: Value,
+    pub confidence: String,
+    pub state: String,
+    pub first_seen_ms: i64,
+    pub last_seen_ms: i64,
+    pub resolved_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FindingCandidate {
+    pub kind: String,
+    pub dedupe_key: String,
+    pub subject: String,
+    pub summary: String,
+    pub severity: String,
+    pub evidence: Value,
+    pub confidence: String,
+}
+
+impl FindingCandidate {
+    pub fn new(
+        kind: &str,
+        dedupe_key: &str,
+        subject: &str,
+        summary: &str,
+        severity: &str,
+        evidence: Value,
+        confidence: &str,
+    ) -> Self {
+        FindingCandidate {
+            kind: kind.to_string(),
+            dedupe_key: dedupe_key.to_string(),
+            subject: subject.to_string(),
+            summary: summary.to_string(),
+            severity: severity.to_string(),
+            evidence,
+            confidence: confidence.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FindingDelta {
+    pub opened: bool,
+    pub dedupe_key: String,
+    pub kind: String,
+    pub subject: String,
+    pub severity: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FindingsFilter {
+    pub open: bool,
+    pub all: bool,
+    pub kind: Option<String>,
+}
+
+/// One worktree, as seen by the check context (its changed set is filled in by `check_workspace`).
+#[derive(Debug, Clone)]
+pub struct WtInfo {
+    /// The worktree PK (`worktrees.id`).
+    pub id: i64,
+    pub path: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub base_ref: Option<String>,
+    pub merge_base: Option<String>,
+    pub is_main: bool,
+    pub present: bool,
+    pub changed: Vec<(String, String)>,
+}
+
+/// One plan row.
+#[derive(Debug, Clone)]
+pub struct PlanInfo {
+    pub id: String,
+    pub source: String,
+    pub title: String,
+    pub worktree_id: Option<i64>,
+    pub state: String,
+}
+
+/// One task row (expected/depends parsed as JSON arrays).
+#[derive(Debug, Clone)]
+pub struct TaskInfo {
+    /// The task PK (`tasks.id`).
+    pub id: String,
+    pub plan_id: String,
+    pub ordinal: i64,
+    pub title: String,
+    pub declared: String,
+    pub expected_paths: Vec<String>,
+    pub depends_on: Vec<String>,
+    pub observed: String,
+    pub observed_reason: Option<String>,
+}
+
+/// One session with its tool_calls.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub agent: String,
+    pub last_event_ms: Option<i64>,
+    pub tokens_in: i64,
+    pub tokens_out: i64,
+    pub tokens_cache: i64,
+    pub cost_usd: Option<f64>,
+    pub tool_calls: Vec<TC>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TC {
+    pub tool: String,
+    pub args_hash: String,
+    pub is_error: bool,
+    pub ts_ms: i64,
+}
+
+/// Everything a run of checks needs, assembled by the daemon.
+#[derive(Debug, Clone)]
+pub struct CheckWorkspace {
+    pub worktrees: Vec<WtInfo>,
+    pub plans: Vec<PlanInfo>,
+    pub tasks: Vec<TaskInfo>,
+    pub sessions: Vec<SessionInfo>,
+    /// per-worktree-path last activity (unix-ms) from `worktree_dirty` events.
+    pub activity: std::collections::HashMap<String, Option<i64>>,
 }
 
 /// One plan and the worktree it drifts against (Task 3).

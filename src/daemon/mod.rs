@@ -20,6 +20,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 pub mod bus;
+pub mod findings;
 pub mod lock;
 pub mod sessions;
 
@@ -78,6 +79,17 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     // Task 2.3: start the worktree event bus (watcher + drain thread).
     let bus = crate::daemon::bus::start_bus(store.clone(), repo_root);
 
+    // Task 5: the findings runner. Runs every 5s (once immediately, then periodically),
+    // rebuilding the workspace, running all checks, and reconciling the results against
+    // the persisted `findings` table. Drop-guarded: holding the handle keeps the thread
+    // alive; dropping it (any return path) ends it.
+    let _findings_thread = crate::daemon::findings::start_findings(
+        store.clone(),
+        state.config.clone(),
+        repo_root.to_path_buf(),
+        Duration::from_secs(5),
+    );
+
     // Task 4: the sessions ingest ticker (pi files -> sessions/tool_calls rows). First
     // pass runs immediately; then every 60s. Drop-guarded: any return path below drops the
     // handle, which stops the thread.
@@ -100,6 +112,7 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
         store,
         repo_key,
         Duration::from_secs(3600), // hard timeout only; normal shutdown is via signal/`shutdown`.
+        state.config.clone(),
     );
 
     // SIGINT (ctrl_c) and SIGTERM both end the daemon gracefully (Section 6).
@@ -112,17 +125,20 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
         result = accept => { let _ = result; }
         _ = tokio::signal::ctrl_c() => {
             let _ = stop_tx.send(Some(0));
+            drop(_findings_thread);
             crate::daemon::bus::stop_bus(&bus);
             return Ok(());
         }
         _ = sigterm.recv() => {
             let _ = stop_tx.send(Some(0));
+            drop(_findings_thread);
             crate::daemon::bus::stop_bus(&bus);
             return Ok(());
         }
     }
 
-    // Normal exit (accept loop returned): stop the event bus too.
+    // Normal exit (accept loop returned): stop the findings runner and the event bus too.
+    drop(_findings_thread);
     crate::daemon::bus::stop_bus(&bus);
     Ok(())
 }

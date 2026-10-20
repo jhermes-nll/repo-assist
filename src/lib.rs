@@ -3,6 +3,7 @@
 //! The `ra` binary (see [`crate::cli`]) is a thin shell over these modules so integration
 //! tests can drive them directly.
 
+pub mod checks;
 pub mod cli;
 pub mod config;
 pub mod daemon;

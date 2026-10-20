@@ -205,7 +205,7 @@ fn spec(cmd: &Command) -> Spec {
             task: 1,
         },
         Worktrees(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         Plans(_) => Spec {
@@ -221,19 +221,19 @@ fn spec(cmd: &Command) -> Spec {
             task: 3,
         },
         Conflicts(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         WhoTouches(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         Findings(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         Ack(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         Sessions(_) => Spec {
@@ -276,6 +276,11 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
         Command::Plan(args) => run_plan(&args),
         Command::Drift(args) => run_drift(&args),
         Command::Sessions(args) => run_sessions(&args),
+        Command::Worktrees(args) => run_worktrees(&args),
+        Command::Conflicts(args) => run_conflicts(&args),
+        Command::WhoTouches(args) => run_who_touches(&args),
+        Command::Findings(args) => run_findings(&args),
+        Command::Ack(args) => run_ack(&args),
         _ => run_implemented(cli.command),
     }
 }
@@ -634,4 +639,199 @@ fn run_implemented(cmd: Command) -> Result<i32, anyhow::Error> {
         command_name(&cmd),
         spec(&cmd).task,
     ))
+}
+
+/// `ra worktrees`: worktrees with branch, ahead/behind base, changed-file counts, last activity
+/// (Task 5) — auto-spawns the daemon, then prints a table or JSON.
+fn run_worktrees(args: &WorktreesArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(crate::ipc::Method::Worktrees, serde_json::Value::Null)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_worktrees_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra conflicts`: overlaps and merge conflicts between worktrees and in-flight plans (Task 5)
+/// — auto-spawns the daemon, then prints them (or nothing).
+fn run_conflicts(args: &ConflictsArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(crate::ipc::Method::Conflicts, serde_json::Value::Null)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_conflicts_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra who-touches <path>`: worktrees, plans, and sessions currently touching a path (Task 5) —
+/// auto-spawns the daemon, then prints them.
+fn run_who_touches(args: &WhoTouchesArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let mut params = serde_json::json!({});
+    params["path"] = serde_json::json!(args.path);
+    let reply = client.call(crate::ipc::Method::WhoTouches, params)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_who_touches_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra findings`: list findings (Task 5), filtered by `--open`/`--all` and `--kind` —
+/// auto-spawns the daemon, then prints them.
+fn run_findings(args: &FindingsArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let mut params = serde_json::json!({});
+    if args.open {
+        params["open"] = serde_json::json!(true);
+    }
+    if args.all {
+        params["all"] = serde_json::json!(true);
+    }
+    if let Some(k) = &args.kind {
+        params["kind"] = serde_json::json!(k);
+    }
+    let reply = client.call(crate::ipc::Method::Findings, params)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_findings_human(&result);
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra ack <id>`: acknowledge a finding (Task 5) — auto-spawns the daemon, then reports whether
+/// the id existed.
+fn run_ack(args: &AckArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(
+        crate::ipc::Method::Ack,
+        serde_json::json!({ "id": args.id }),
+    )?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(false);
+            let id = result.get("id").and_then(Value::as_str).unwrap_or("");
+            if ok {
+                println!("acked {id}");
+            } else {
+                anyhow::bail!("no finding with id {id}");
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// Human-readable `ra worktrees` output.
+fn print_worktrees_human(s: &serde_json::Value) {
+    if let Some(list) = s.get("worktrees").and_then(|v| v.as_array()) {
+        for wt in list {
+            let path = wt.get("path").and_then(Value::as_str).unwrap_or("?");
+            let branch = wt.get("branch").and_then(Value::as_str).unwrap_or("-");
+            let changed = wt.get("changed").and_then(Value::as_i64).unwrap_or(0);
+            println!("  {path} ({branch}): {changed} changed file(s)");
+        }
+    }
+}
+
+/// Human-readable `ra conflicts` output.
+fn print_conflicts_human(s: &serde_json::Value) {
+    let rows: &[_] = s
+        .get("conflicts")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    if rows.is_empty() {
+        println!("no conflicts");
+        return;
+    }
+    for row in rows {
+        let kind = row.get("kind").and_then(Value::as_str).unwrap_or("?");
+        let subject = row.get("subject").and_then(Value::as_str).unwrap_or("");
+        println!("{}: {}", kind, subject);
+    }
+}
+
+/// Human-readable `ra who-touches` output.
+fn print_who_touches_human(s: &serde_json::Value) {
+    let show = |label: &str, key: &str| {
+        let rows: &[_] = s
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        if !rows.is_empty() {
+            println!("{label}:");
+            for row in rows {
+                let kind = row.get("kind").and_then(Value::as_str).unwrap_or("");
+                let path = row.get("path").and_then(Value::as_str).unwrap_or("");
+                let id = row.get("id").and_then(Value::as_str).unwrap_or("");
+                let agent = row.get("agent").and_then(Value::as_str).unwrap_or("");
+                if id.is_empty() {
+                    println!("  {kind} {path}");
+                } else {
+                    println!("  {kind} {id} ({agent})");
+                }
+            }
+        }
+    };
+    show("worktrees", "worktrees");
+    show("plans", "plans");
+    show("sessions", "sessions");
+}
+
+/// Human-readable `ra findings` output.
+fn print_findings_human(s: &serde_json::Value) {
+    let rows: &[_] = s
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    if rows.is_empty() {
+        println!("no findings");
+        return;
+    }
+    for row in rows {
+        let id = row.get("id").and_then(Value::as_i64).unwrap_or(0);
+        let kind = row.get("kind").and_then(Value::as_str).unwrap_or("?");
+        let severity = row.get("severity").and_then(Value::as_str).unwrap_or("?");
+        let subject = row.get("subject").and_then(Value::as_str).unwrap_or("");
+        println!("{severity:>5}  {kind}  {subject}  (id {id})");
+    }
 }

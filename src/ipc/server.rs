@@ -13,8 +13,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
 
+use crate::checks::CheckCtx;
+use crate::config::Config;
 use crate::ipc::{Method, Request, PROTO_VERSION};
-use crate::store::Store;
+use crate::store::{FindingsFilter, Store, WtInfo};
 use crate::{TOOL_NAME, VERSION};
 
 /// The shutdown signal handed to the accept loop: the watch **Sender**. Any connection task
@@ -38,6 +40,7 @@ pub async fn run_accept_loop(
     store: Arc<Store>,
     repo_key: String,
     hard_timeout: Duration,
+    config: Config,
 ) -> std::io::Result<()> {
     // Monitor shutdown by watching the receiver (Section 6: graceful shutdown).
 
@@ -60,10 +63,11 @@ pub async fn run_accept_loop(
                 let task_rx = stop_rx.clone();
                 let store = store.clone();
                 let repo_key = repo_key.clone();
+                let config = config.clone();
                 let handle = tokio::spawn(async move {
                     let _ = tokio::time::timeout(
                         Duration::from_secs(30),
-                        handle_connection(&mut stream, task_rx, stop_tx, &store, &repo_key),
+                        handle_connection(&mut stream, task_rx, stop_tx, &store, &repo_key, config),
                     )
                     .await;
                     let _ = stream.flush().await;
@@ -92,6 +96,7 @@ async fn handle_connection(
     stop_tx: StopSignal,
     store: &Store,
     repo_key: &str,
+    config: Config,
 ) -> std::io::Result<()> {
     // React to a `shutdown` request (or process shutdown) mid-connection by stopping after the
     // current request is answered. `stop_rx.changed()` fires when `stop_tx` flips.
@@ -123,6 +128,7 @@ async fn handle_connection(
             stop_tx.clone(),
             store,
             repo_key,
+            &config,
         )
         .await?
         {
@@ -143,6 +149,7 @@ async fn dispatch_request(
     stop_tx: StopSignal,
     store: &Store,
     repo_key: &str,
+    config: &Config,
 ) -> std::io::Result<bool> {
     match req.method {
         Method::Hello => {
@@ -232,6 +239,32 @@ async fn dispatch_request(
                     }
                 }
             }
+        }
+        Method::Worktrees => {
+            let result = tokio::task::block_in_place(|| worktrees_json(store))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
+        Method::Conflicts => {
+            let result = tokio::task::block_in_place(|| conflicts_json(store, config))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
+        Method::WhoTouches => {
+            let target = req.params.get("path").and_then(Value::as_str).unwrap_or("");
+            let result = tokio::task::block_in_place(|| who_touches_json(store, target))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
+        Method::Findings => {
+            let result = tokio::task::block_in_place(|| findings_json(store, &req.params))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
+        Method::Ack => {
+            let result = tokio::task::block_in_place(|| ack_json(store, &req.params))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
         }
         other => write_reply(
             stream,
@@ -537,4 +570,187 @@ async fn read_line(stream: &mut UnixStream) -> std::io::Result<Option<String>> {
             None => line.push_str(std::str::from_utf8(&buf[..n]).unwrap_or_default()),
         }
     }
+}
+
+/// Build the `Method::Worktrees` result: every worktree with its branch, head, presence, and
+/// changed-file count (recomputed live from `git` by `check_workspace`).
+fn worktrees_json(store: &Store) -> Result<Value, crate::store::StoreError> {
+    let ws = store.check_workspace()?;
+    let out: Vec<Value> = ws
+        .worktrees
+        .iter()
+        .map(|w| {
+            json!({
+                "path": w.path,
+                "branch": w.branch,
+                "head": w.head,
+                "is_main": w.is_main,
+                "present": w.present,
+                "changed": w.changed.len(),
+            })
+        })
+        .collect();
+    Ok(json!({ "worktrees": out }))
+}
+
+/// Build the `Method::Conflicts` result: worktree overlaps, branch-head merge conflicts, and
+/// overlaps between active plans. Severity `error` (merge conflict) or `warn` (overlap).
+/// Read-only: runs the checks and keeps only the conflict kinds, never writes to the store.
+fn conflicts_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
+    let ws = store.check_workspace()?;
+    let now = crate::sources::git::now_ms();
+    let ctx = CheckCtx {
+        workspace: &ws,
+        config,
+        now,
+    };
+    let candidates = crate::checks::run_all_checks(&ctx);
+    let conflicts: Vec<Value> = candidates
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.kind.as_str(),
+                "worktree.overlap" | "worktree.merge_conflict" | "plan.overlap"
+            )
+        })
+        .map(|c| {
+            json!({
+                "kind": c.kind,
+                "severity": c.severity,
+                "subject": c.subject,
+                "summary": c.summary,
+                "dedupe_key": c.dedupe_key,
+                "evidence": c.evidence,
+            })
+        })
+        .collect();
+    Ok(json!({ "conflicts": conflicts }))
+}
+
+/// Build the `Method::WhoTouches` result: worktrees, plans, and sessions currently touching
+/// `target` (a repo-relative path). Read-only: rebuilds the workspace and matches each
+/// entity's changed set / expected paths / worktree against the target.
+fn who_touches_json(store: &Store, target: &str) -> Result<Value, crate::store::StoreError> {
+    let ws = store.check_workspace()?;
+    let by_path: std::collections::HashMap<String, &WtInfo> =
+        ws.worktrees.iter().map(|w| (w.path.clone(), w)).collect();
+    let norm = target.trim_end_matches('/').to_string();
+    let dir = if norm.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", norm)
+    };
+    let path_touches = |p: &str| *p == *target || (!dir.is_empty() && p.starts_with(&dir));
+    let touches =
+        |changed: &[(String, String)]| -> bool { changed.iter().any(|(p, _)| path_touches(p)) };
+
+    let worktrees: Vec<Value> = ws
+        .worktrees
+        .iter()
+        .filter(|w| touches(&w.changed))
+        .map(|w| {
+            json!({
+                "kind": "worktree",
+                "path": w.path,
+                "branch": w.branch,
+                "changed": w.changed.len(),
+            })
+        })
+        .collect();
+
+    // Plans touch the target when any of their tasks' expected paths includes it, or when
+    // the plan's own worktree changed set includes it.
+    let plans: Vec<Value> = ws
+        .plans
+        .iter()
+        .filter_map(|plan| {
+            let expected: Vec<String> = ws
+                .tasks
+                .iter()
+                .filter(|t| t.plan_id == plan.id)
+                .flat_map(|t| t.expected_paths.iter().cloned())
+                .collect();
+            let touched_by_expected = expected.iter().any(|p| path_touches(p));
+            let touched_by_wt = ws
+                .worktrees
+                .iter()
+                .any(|w| plan.worktree_id == Some(w.id) && touches(&w.changed));
+            if touched_by_expected || touched_by_wt {
+                Some(json!({ "kind": "plan", "id": plan.id, "title": plan.title, "state": plan.state }))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sessions touch the target when their own worktree's changed set includes it.
+    let sessions_out: Vec<Value> = store.read(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.agent, wt.path FROM sessions s LEFT JOIN worktrees wt ON wt.id = s.worktree_id",
+        )?;
+        let rows: Vec<(String, String, Option<String>)> = stmt
+            .query_map(
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get(2)?)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = Vec::new();
+        for (id, agent, wpath) in rows {
+            if let Some(wp) = wpath {
+                if let Some(w) = by_path.get(&wp) {
+                    if touches(&w.changed) {
+                        out.push(json!({ "kind": "session", "id": id, "agent": agent }));
+                    }
+                }
+            }
+        }
+        Ok(out)
+    })?;
+
+    Ok(json!({
+        "worktrees": worktrees,
+        "plans": plans,
+        "sessions": sessions_out,
+    }))
+}
+
+/// Build the `Method::Findings` result: the persisted findings filtered by state and kind.
+/// The daemon's findings runner keeps the table current, so this only reads.
+fn findings_json(store: &Store, params: &Value) -> Result<Value, crate::store::StoreError> {
+    let open = params.get("open").and_then(Value::as_bool).unwrap_or(false);
+    let all = params.get("all").and_then(Value::as_bool).unwrap_or(false);
+    let kind = params
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+    let filter = FindingsFilter { open, all, kind };
+    let rows = store.list_findings(&filter)?;
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "kind": r.kind,
+                "severity": r.severity,
+                "subject": r.subject,
+                "summary": r.summary,
+                "state": r.state,
+                "dedupe_key": r.dedupe_key,
+                "confidence": r.confidence,
+                "evidence": r.evidence,
+                "first_seen_ms": r.first_seen_ms,
+                "last_seen_ms": r.last_seen_ms,
+                "resolved_ms": r.resolved_ms,
+            })
+        })
+        .collect();
+    Ok(json!({ "findings": out }))
+}
+
+/// Build the `Method::Ack` result: mark one finding `acked` (by store id).
+fn ack_json(store: &Store, params: &Value) -> Result<Value, crate::store::StoreError> {
+    let id = params.get("id").and_then(Value::as_str).unwrap_or("");
+    let now = crate::sources::git::now_ms();
+    let ok = store.ack_finding(id, now)?;
+    Ok(json!({ "ok": ok, "id": id }))
 }
