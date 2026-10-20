@@ -13,7 +13,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(3),
             Constraint::Length(1),
         ])
         .split(frame.area());
@@ -48,17 +48,29 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Rows
     let rows = app.filtered_rows();
     let selected = app.selected_row();
-    let items: Vec<ListItem> = rows
-        .iter()
-        .map(|r| {
-            let style = if selected.map(|s| std::ptr::eq(s, *r)).unwrap_or(false) {
-                Style::default().fg(Color::Black).bg(Color::White)
-            } else {
-                Style::default()
-            };
-            ListItem::new(Line::from(Span::styled(r.text.clone(), style)))
-        })
-        .collect();
+    let header = match app.tab {
+        crate::tui::app::Tab::Worktrees => "path | branch | changed",
+        crate::tui::app::Tab::Plans => "title | declared/observed",
+        crate::tui::app::Tab::Findings => "kind/severity | state | summary",
+        crate::tui::app::Tab::Sessions => "id | agent | last_event_ms",
+    };
+    let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(Span::styled(
+        header.to_string(),
+        Style::default().add_modifier(Modifier::BOLD),
+    )))];
+    for r in rows.iter() {
+        let style = if selected.map(|s| std::ptr::eq(s, *r)).unwrap_or(false) {
+            Style::default().fg(Color::Black).bg(Color::White)
+        } else {
+            Style::default()
+        };
+        let text = if r.cells.len() > 1 {
+            r.cells.join(" | ")
+        } else {
+            r.text.clone()
+        };
+        items.push(ListItem::new(Line::from(Span::styled(text, style))));
+    }
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)

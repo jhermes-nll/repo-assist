@@ -3,7 +3,7 @@ mod common;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::TestBackend, Terminal};
 
-use repo_assist::tui::app::{Action, App, Tab};
+use repo_assist::tui::app::{Action, App, Row, Tab};
 use repo_assist::tui::client::{DataSource, Snapshot};
 use repo_assist::tui::ui::draw;
 
@@ -412,4 +412,76 @@ fn tui_ack_finding_bogus_fails() {
     let mut ds = DataSource::new(sock.clone());
     let _ = ds.fetch_all();
     assert!(ds.ack_finding("999999").is_err(), "bogus ack should fail");
+}
+
+#[test]
+fn tui_detail_survives_refresh_same_row() {
+    use repo_assist::tui::client::Snapshot;
+    let mut app = App::new();
+    app.repo_key = "repo-key".into();
+    let row = Row::with_id("id-1".to_string(), "row one".to_string());
+    app.rows[Tab::Worktrees.index()] = vec![row.clone()];
+    app.tab = Tab::Worktrees;
+    app.cursor[0] = 0;
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.detail.is_some());
+
+    let mut snap = Snapshot::default();
+    snap.rows[Tab::Worktrees.index()] = vec![row];
+    app.apply_snapshot(&snap);
+    assert!(
+        app.detail.is_some(),
+        "detail should survive refresh with same row"
+    );
+
+    // tab switch clears
+    app.on_key(key(KeyCode::Tab));
+    assert!(app.detail.is_none());
+
+    // absent row clears
+    let mut app2 = App::new();
+    app2.rows[Tab::Worktrees.index()] =
+        vec![Row::with_id("id-1".to_string(), "row one".to_string())];
+    app2.tab = Tab::Worktrees;
+    app2.cursor[0] = 0;
+    app2.on_key(key(KeyCode::Enter));
+    let snap2 = Snapshot::default();
+    app2.apply_snapshot(&Snapshot::default());
+    assert!(app2.detail.is_none());
+}
+
+#[test]
+fn tui_detail_renders_in_buffer() {
+    let mut app = App::new();
+    app.repo_key = "repo-key".into();
+    app.rows[Tab::Worktrees.index()] =
+        vec![Row::with_id("id-1".to_string(), "row one".to_string())];
+    app.tab = Tab::Worktrees;
+    app.cursor[0] = 0;
+    app.on_key(key(KeyCode::Enter));
+    let view = render(&app);
+    assert!(view.contains("DETAIL:"));
+    assert!(view.contains("row one"));
+}
+
+#[test]
+fn tui_worktrees_sessions_headers() {
+    let mut app = App::new();
+    app.repo_key = "repo-key".into();
+    let mut w = Row::with_id("p".to_string(), "p".to_string());
+    w.cells = vec!["/tmp/wt".into(), "main".into(), "3".into()];
+    app.rows[Tab::Worktrees.index()] = vec![w];
+    app.tab = Tab::Worktrees;
+    let view = render(&app);
+    assert!(view.contains("path | branch | changed"));
+    assert!(view.contains("main"));
+
+    let mut app2 = App::new();
+    let mut s = Row::with_id("sess-1".to_string(), "sess-1".to_string());
+    s.cells = vec!["sess-1".into(), "claude".into(), "123".into()];
+    app2.rows[Tab::Sessions.index()] = vec![s];
+    app2.tab = Tab::Sessions;
+    let view2 = render(&app2);
+    assert!(view2.contains("id | agent | last_event_ms"));
+    assert!(view2.contains("claude"));
 }

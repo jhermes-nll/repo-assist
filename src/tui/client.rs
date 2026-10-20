@@ -142,21 +142,50 @@ impl DataSource {
         let mut wrows = Vec::new();
         if let Some(arr) = worktrees.get("worktrees").and_then(|v| v.as_array()) {
             for w in arr {
-                let name = w.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                wrows.push(Row::new(name.to_string()));
+                let path = w
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let branch = w
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let changed = w.get("changed").and_then(|v| v.as_u64()).unwrap_or(0);
+                let mut row = Row::with_id(path.clone(), path.clone());
+                row.cells = vec![path, branch, changed.to_string()];
+                wrows.push(row);
             }
         }
         let mut prows = Vec::new();
         if let Some(arr) = plans.get("plans").and_then(|v| v.as_array()) {
             for p in arr {
-                let t = p.get("title").and_then(|v| v.as_str()).unwrap_or("?");
-                prows.push(Row::new(t.to_string()));
+                let t = p
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let declared = p.get("declared_done").and_then(|v| v.as_i64()).unwrap_or(0);
+                let observed = p.get("observed_done").and_then(|v| v.as_i64()).unwrap_or(0);
+                let id = p
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let mut row = Row::with_id(id, t.clone());
+                row.cells = vec![t, format!("{}/{}", declared, observed)];
+                prows.push(row);
             }
         }
         let mut frows = Vec::new();
         if let Some(arr) = findings.get("findings").and_then(|v| v.as_array()) {
             for f in arr {
-                let t = f.get("summary").and_then(|v| v.as_str()).unwrap_or("?");
+                let t = f
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
                 let id = if let Some(n) = f.get("id").and_then(|v| v.as_i64()) {
                     n.to_string()
                 } else if let Some(s) = f.get("id").and_then(|v| v.as_str()) {
@@ -164,14 +193,43 @@ impl DataSource {
                 } else {
                     "?".to_string()
                 };
-                frows.push(Row::with_id(id, t.to_string()));
+                let kind = f
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let sev = f
+                    .get("severity")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let state = f
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let mut row = Row::with_id(id, t.clone());
+                row.cells = vec![format!("{}/{}", kind, sev), state, t];
+                frows.push(row);
             }
         }
         let mut srows = Vec::new();
         if let Some(arr) = sessions.get("sessions").and_then(|v| v.as_array()) {
             for s in arr {
-                let t = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-                srows.push(Row::new(t.to_string()));
+                let id = s
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let agent = s
+                    .get("agent")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let last = s.get("last_event_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+                let mut row = Row::with_id(id.clone(), id.clone());
+                row.cells = vec![id, agent, last.to_string()];
+                srows.push(row);
             }
         }
         snap.rows[Tab::Worktrees.index()] = wrows;

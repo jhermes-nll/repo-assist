@@ -82,6 +82,7 @@ impl From<&str> for Row {
 /// Detail pane content.
 #[derive(Debug, Clone, Default)]
 pub struct Detail {
+    pub id: String,
     pub title: String,
     pub lines: Vec<String>,
 }
@@ -179,8 +180,20 @@ impl App {
         self.daemon_version = snap.daemon_version.clone();
         self.counts = snap.counts.clone();
         self.rows = snap.rows.clone();
-        // Clear any stale detail pane (it may reference a row from another tab/refresh).
+        // Re-resolve the detail against the new rows instead of blindly clearing
+        // it: survives when the referenced row still exists, clears otherwise.
+        let detail_id = self.detail.as_ref().map(|d| d.id.clone());
         self.detail = None;
+        if let Some(id) = detail_id {
+            let filtered: Vec<&Row> = self.filtered_rows();
+            if let Some(row) = filtered.into_iter().find(|r| r.id == id) {
+                self.detail = Some(Detail {
+                    id: row.id.clone(),
+                    title: row.text.clone(),
+                    lines: row.cells.clone(),
+                });
+            }
+        }
         for i in 0..4 {
             let n = self.filtered_rows_for(i).len();
             if n == 0 {
@@ -286,6 +299,7 @@ impl App {
                 // open detail from selected row if present
                 if let Some(r) = self.selected_row() {
                     self.detail = Some(Detail {
+                        id: r.id.clone(),
                         title: r.text.clone(),
                         lines: r.cells.clone(),
                     });
