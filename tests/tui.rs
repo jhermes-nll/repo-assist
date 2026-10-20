@@ -445,8 +445,8 @@ fn tui_detail_survives_refresh_same_row() {
     app2.tab = Tab::Worktrees;
     app2.cursor[0] = 0;
     app2.on_key(key(KeyCode::Enter));
-    let snap2 = Snapshot::default();
     app2.apply_snapshot(&Snapshot::default());
+
     assert!(app2.detail.is_none());
 }
 
