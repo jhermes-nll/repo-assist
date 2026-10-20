@@ -16,6 +16,7 @@ use tokio::sync::watch;
 use crate::checks::CheckCtx;
 use crate::config::Config;
 use crate::ipc::{Method, Request, PROTO_VERSION};
+use crate::paths::Env;
 use crate::store::{FindingsFilter, Store, WtInfo};
 use crate::{TOOL_NAME, VERSION};
 
@@ -268,6 +269,18 @@ async fn dispatch_request(
                 Err(e) => write_reply(stream, &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } })).await?,
             }
         }
+        Method::RenderViews => {
+            match tokio::task::block_in_place(|| render_views_json(store, repo_key)) {
+                Ok(result) => write_reply(stream, &json!({ "id": req.id, "result": result })).await?,
+                Err(e) => write_reply(stream, &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } })).await?,
+            }
+        }
+        Method::Doctor => {
+            let env = Env::from_real();
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let result = tokio::task::block_in_place(|| doctor_json(&env, &cwd, config));
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
         other => write_reply(
             stream,
             &json!({ "id": req.id, "error": { "code": "not_implemented", "message": format!("method '{other}' is not yet implemented") } }),
@@ -277,7 +290,45 @@ async fn dispatch_request(
     Ok(false)
 }
 
-/// Build the status object for `ra status` (Section 6) by querying the store synchronously.
+/// Render views from store data and write atomically; return written paths.
+fn render_views_json(
+    store: &Store,
+    repo_key: &str,
+) -> Result<Value, crate::views::write::ViewError> {
+    use crate::paths::Env;
+    use crate::views::write::write_views;
+    use crate::views::{render_findings, render_plans, render_status, ViewData};
+    let status = status_json(store, repo_key)
+        .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
+    let plans =
+        plans_json(store).map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
+    let findings = findings_json(store, &Value::Null)
+        .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
+    let sessions =
+        sessions_json(store).map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
+    let d = ViewData {
+        status,
+        plans,
+        findings,
+        sessions,
+    };
+    let now = crate::sources::git::now_ms();
+    let rendered = vec![
+        ("STATUS.md", render_status(&d, now)),
+        ("PLANS.md", render_plans(&d, now)),
+        ("FINDINGS.md", render_findings(&d, now)),
+    ];
+    let dir = Env::from_real().views_dir(repo_key);
+    let written = write_views(&dir, &rendered)?;
+    Ok(json!({ "written": written }))
+}
+
+/// Doctor checks as JSON.
+fn doctor_json(env: &Env, repo_path: &std::path::Path, config: &Config) -> Value {
+    let checks = crate::doctor::run_all(env, repo_path, config);
+    serde_json::json!({ "checks": checks })
+}
+
 fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::StoreError> {
     store.read(|conn| {
         let mut worktrees: Vec<Value> = {

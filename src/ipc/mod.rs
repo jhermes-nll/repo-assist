@@ -83,6 +83,7 @@ pub enum Method {
     Sessions,
     Subscribe,
     RenderViews,
+    Doctor,
     Shutdown,
 }
 
@@ -103,6 +104,7 @@ impl std::fmt::Display for Method {
             Method::Sessions => "sessions",
             Method::Subscribe => "subscribe",
             Method::RenderViews => "render_views",
+            Method::Doctor => "doctor",
             Method::Shutdown => "shutdown",
         };
         f.write_str(s)

@@ -7,10 +7,12 @@ pub mod checks;
 pub mod cli;
 pub mod config;
 pub mod daemon;
+pub mod doctor;
 pub mod ipc;
 pub mod paths;
 pub mod sources;
 pub mod store;
+pub mod views;
 
 /// Tool name and version, kept in one place.
 pub const TOOL_NAME: &str = "ra";

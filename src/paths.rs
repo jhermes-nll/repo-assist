@@ -116,9 +116,12 @@ impl Env {
                 .join(format!("{repo_key}.sock"))
         }
     }
+    /// Directory holding rendered markdown views for a repo (§11).
+    pub fn views_dir(&self, repo_key: &str) -> PathBuf {
+        self.state_dir(repo_key).join("views")
+    }
 }
 
-/// All files that live inside a repo's state directory.
 #[derive(Debug, Clone)]
 pub struct StateFiles {
     /// State directory: `$XDG_STATE_HOME/repo-assist/<repo-key>`.

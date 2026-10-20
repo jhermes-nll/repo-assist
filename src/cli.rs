@@ -245,11 +245,11 @@ fn spec(cmd: &Command) -> Spec {
             task: 5,
         },
         Doctor(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         Render(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 2,
         },
     }
@@ -281,6 +281,8 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
         Command::WhoTouches(args) => run_who_touches(&args),
         Command::Findings(args) => run_findings(&args),
         Command::Ack(args) => run_ack(&args),
+        Command::Doctor(args) => run_doctor(&args),
+        Command::Render(args) => run_render(&args),
         _ => run_implemented(cli.command),
     }
 }
@@ -364,7 +366,86 @@ fn run_drift(args: &DriftArgs) -> Result<i32, anyhow::Error> {
     Ok(0)
 }
 
-/// Human-readable `ra plans` output.
+/// `ra render`: force-render views (Task 1).
+fn run_render(args: &RenderArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let reply = client.call(crate::ipc::Method::RenderViews, serde_json::Value::Null)?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            let written: Vec<String> = result
+                .get("written")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                if written.is_empty() {
+                    println!("no changes");
+                } else {
+                    for p in &written {
+                        println!("wrote {p}");
+                    }
+                }
+            }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// `ra doctor`: environment checks (Task 2).
+fn run_doctor(args: &DoctorArgs) -> Result<i32, anyhow::Error> {
+    use crate::paths::Env;
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let env = Env::from_real();
+    if let Ok(c) = crate::config::Config::load(&cwd, &env.home) {
+        let checks = crate::doctor::run_all(&env, &cwd, &c);
+        print_doctor(&checks, args.json);
+        return Ok(
+            if checks
+                .iter()
+                .any(|ch| matches!(ch.status, crate::doctor::CheckStatus::Fail))
+            {
+                1
+            } else {
+                0
+            },
+        );
+    }
+    let e = crate::config::Config::load(&cwd, &env.home).unwrap_err();
+    let mut checks = crate::doctor::run_all(&env, &cwd, &crate::config::Config::default_config());
+    for ch in checks.iter_mut() {
+        if ch.name == "config validity" {
+            ch.status = crate::doctor::CheckStatus::Fail;
+            ch.detail = e.clone();
+        }
+    }
+    print_doctor(&checks, args.json);
+    Ok(1)
+}
+
+fn print_doctor(checks: &[crate::doctor::Check], json: bool) {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&checks).unwrap());
+    } else {
+        for c in checks {
+            println!(
+                "{:<24} {:<5} {}",
+                c.name,
+                format!("{:?}", c.status).to_lowercase(),
+                c.detail
+            );
+        }
+    }
+}
+
 fn print_plans_human(s: &serde_json::Value) {
     println!("{:<12}  {:<6}  TITLE", "PLAN", "STATE");
     if let Some(list) = s.get("plans").and_then(|v| v.as_array()) {
