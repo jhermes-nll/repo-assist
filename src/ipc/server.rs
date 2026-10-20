@@ -16,7 +16,6 @@ use tokio::sync::watch;
 use crate::checks::CheckCtx;
 use crate::config::Config;
 use crate::ipc::{Method, Request, PROTO_VERSION};
-use crate::paths::Env;
 use crate::store::{FindingsFilter, Store, WtInfo};
 use crate::{TOOL_NAME, VERSION};
 
@@ -270,16 +269,20 @@ async fn dispatch_request(
             }
         }
         Method::RenderViews => {
-            match tokio::task::block_in_place(|| render_views_json(store, repo_key)) {
+            let render_result = {
+                let _guard = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                tokio::task::block_in_place(|| render_views_json(store, repo_key, config))
+            };
+            match render_result {
                 Ok(result) => write_reply(stream, &json!({ "id": req.id, "result": result })).await?,
-                Err(e) => write_reply(stream, &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } })).await?,
+                Err(e) => {
+                    let code = match e {
+                        crate::views::write::ViewError::Io(_) => "io_error",
+                        crate::views::write::ViewError::Store(_) => "store_error",
+                    };
+                    write_reply(stream, &json!({ "id": req.id, "error": { "code": code, "message": e.to_string() } })).await?
+                }
             }
-        }
-        Method::Doctor => {
-            let env = Env::from_real();
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let result = tokio::task::block_in_place(|| doctor_json(&env, &cwd, config));
-            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
         }
         other => write_reply(
             stream,
@@ -290,14 +293,20 @@ async fn dispatch_request(
     Ok(false)
 }
 
+/// Serialises view renders across connections (M2: prevent interleaved tmp writes).
+static RENDER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Render views from store data and write atomically; return written paths.
-fn render_views_json(
+pub fn render_views_json(
     store: &Store,
     repo_key: &str,
+    config: &Config,
 ) -> Result<Value, crate::views::write::ViewError> {
-    use crate::paths::Env;
     use crate::views::write::write_views;
     use crate::views::{render_findings, render_plans, render_status, ViewData};
+    if !config.views.enabled {
+        return Ok(json!({ "written": [] }));
+    }
     let status = status_json(store, repo_key)
         .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
     let plans =
@@ -318,15 +327,9 @@ fn render_views_json(
         ("PLANS.md", render_plans(&d, now)),
         ("FINDINGS.md", render_findings(&d, now)),
     ];
-    let dir = Env::from_real().views_dir(repo_key);
+    let dir = crate::paths::Env::from_real().views_dir(repo_key);
     let written = write_views(&dir, &rendered)?;
     Ok(json!({ "written": written }))
-}
-
-/// Doctor checks as JSON.
-fn doctor_json(env: &Env, repo_path: &std::path::Path, config: &Config) -> Value {
-    let checks = crate::doctor::run_all(env, repo_path, config);
-    serde_json::json!({ "checks": checks })
 }
 
 fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::StoreError> {

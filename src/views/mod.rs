@@ -75,7 +75,7 @@ pub fn render_status(d: &ViewData, now_ms: i64) -> String {
             lines.push(format!("  {p} ({b}): {c} changed"));
         }
     }
-    cap(&mut lines, false);
+    cap(&mut lines);
     lines.join("\n") + "\n"
 }
 
@@ -85,8 +85,13 @@ pub fn render_plans(d: &ViewData, now_ms: i64) -> String {
     header(&mut lines, &ViewMeta::new(now_ms));
     lines.push("# Plans".to_string());
     lines.push(String::new());
+    let mut any = false;
     if let Some(plans) = d.plans.get("plans").and_then(Value::as_array) {
+        if plans.is_empty() {
+            lines.push("no plans".to_string());
+        }
         for p in plans {
+            any = true;
             let id = p.get("id").and_then(Value::as_str).unwrap_or("?");
             let title = p.get("title").and_then(Value::as_str).unwrap_or("");
             let state = p.get("state").and_then(Value::as_str).unwrap_or("-");
@@ -97,7 +102,8 @@ pub fn render_plans(d: &ViewData, now_ms: i64) -> String {
     } else {
         lines.push("no plans".to_string());
     }
-    cap(&mut lines, false);
+    let _ = any;
+    cap(&mut lines);
     lines.join("\n") + "\n"
 }
 
@@ -108,16 +114,16 @@ pub fn render_findings(d: &ViewData, now_ms: i64) -> String {
     lines.push("# Findings".to_string());
     lines.push(String::new());
 
-    // Partition open vs resolved/acked.
     let mut open_rows: Vec<&Value> = Vec::new();
-    let mut other_rows: Vec<&Value> = Vec::new();
+    let mut acked_rows: Vec<&Value> = Vec::new();
+    let mut resolved_rows: Vec<&Value> = Vec::new();
     if let Some(arr) = d.findings.get("findings").and_then(Value::as_array) {
         for f in arr {
             let state = f.get("state").and_then(Value::as_str).unwrap_or("open");
-            if state == "open" {
-                open_rows.push(f);
-            } else {
-                other_rows.push(f);
+            match state {
+                "open" => open_rows.push(f),
+                "acked" => acked_rows.push(f),
+                _ => resolved_rows.push(f),
             }
         }
     }
@@ -126,22 +132,35 @@ pub fn render_findings(d: &ViewData, now_ms: i64) -> String {
         lines.push("(none)".to_string());
     }
     for f in &open_rows {
+        let sev = f.get("severity").and_then(Value::as_str).unwrap_or("?");
         let kind = f.get("kind").and_then(Value::as_str).unwrap_or("?");
         let subject = f.get("subject").and_then(Value::as_str).unwrap_or("");
         let summary = f.get("summary").and_then(Value::as_str).unwrap_or("");
-        lines.push(format!("- {kind}: {subject} — {summary}"));
+        lines.push(format!("- [{sev}] {kind}: {subject} — {summary}"));
+    }
+    lines.push(String::new());
+    lines.push("## Acknowledged".to_string());
+    if acked_rows.is_empty() {
+        lines.push("(none)".to_string());
+    }
+    for f in &acked_rows {
+        let sev = f.get("severity").and_then(Value::as_str).unwrap_or("?");
+        let kind = f.get("kind").and_then(Value::as_str).unwrap_or("?");
+        let subject = f.get("subject").and_then(Value::as_str).unwrap_or("");
+        lines.push(format!("- [{sev}] {kind}: {subject}"));
     }
     lines.push(String::new());
     lines.push("## Resolved".to_string());
-    if other_rows.is_empty() {
+    if resolved_rows.is_empty() {
         lines.push("(none)".to_string());
     }
-    for f in &other_rows {
+    for f in &resolved_rows {
+        let sev = f.get("severity").and_then(Value::as_str).unwrap_or("?");
         let kind = f.get("kind").and_then(Value::as_str).unwrap_or("?");
         let subject = f.get("subject").and_then(Value::as_str).unwrap_or("");
-        lines.push(format!("- {kind}: {subject}"));
+        lines.push(format!("- [{sev}] {kind}: {subject}"));
     }
-    cap(&mut lines, true);
+    cap(&mut lines);
     lines.join("\n") + "\n"
 }
 
@@ -163,14 +182,9 @@ fn iso8601(ms: i64) -> String {
     }
 }
 
-fn cap(lines: &mut Vec<String>, _open_first: bool) {
+fn cap(lines: &mut Vec<String>) {
     if lines.len() > VIEW_CAP_LINES {
         lines.truncate(VIEW_CAP_LINES - 1);
         lines.push(format!("[... truncated to {VIEW_CAP_LINES} lines ...]"));
     }
-}
-
-/// Truncate helper exposed for tests wanting explicit control.
-pub fn cap_lines(lines: &mut Vec<String>) {
-    cap(lines, false);
 }

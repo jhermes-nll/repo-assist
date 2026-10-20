@@ -122,6 +122,7 @@ impl Env {
     }
 }
 
+/// Full set of state files that live in the state directory.
 #[derive(Debug, Clone)]
 pub struct StateFiles {
     /// State directory: `$XDG_STATE_HOME/repo-assist/<repo-key>`.

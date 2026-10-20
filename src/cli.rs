@@ -405,35 +405,38 @@ fn run_doctor(args: &DoctorArgs) -> Result<i32, anyhow::Error> {
     use crate::paths::Env;
     let cwd = std::env::current_dir().context("resolving cwd")?;
     let env = Env::from_real();
-    if let Ok(c) = crate::config::Config::load(&cwd, &env.home) {
-        let checks = crate::doctor::run_all(&env, &cwd, &c);
-        print_doctor(&checks, args.json);
-        return Ok(
-            if checks
+    let (checks, exit) = match crate::config::Config::load(&cwd, &env.home) {
+        Ok(c) => {
+            let checks = crate::doctor::run_all(&env, &cwd, &c);
+            let fail = checks
                 .iter()
-                .any(|ch| matches!(ch.status, crate::doctor::CheckStatus::Fail))
-            {
-                1
-            } else {
-                0
-            },
-        );
-    }
-    let e = crate::config::Config::load(&cwd, &env.home).unwrap_err();
-    let mut checks = crate::doctor::run_all(&env, &cwd, &crate::config::Config::default_config());
-    for ch in checks.iter_mut() {
-        if ch.name == "config validity" {
-            ch.status = crate::doctor::CheckStatus::Fail;
-            ch.detail = e.clone();
+                .any(|ch| matches!(ch.status, crate::doctor::CheckStatus::Fail));
+            (checks, if fail { 1 } else { 0 })
         }
-    }
-    print_doctor(&checks, args.json);
-    Ok(1)
+        Err(e) => {
+            let mut checks =
+                crate::doctor::run_all(&env, &cwd, &crate::config::Config::default_config());
+            if let Some(last) = checks.last_mut() {
+                if last.name == "config validity" {
+                    let _ = last;
+                }
+            }
+            // Replace the trailing config-validity entry without matching by name string.
+            let detail = e;
+            if let Some(slot) = checks.last_mut() {
+                slot.status = crate::doctor::CheckStatus::Fail;
+                slot.detail = detail;
+            }
+            (checks, 1)
+        }
+    };
+    print_doctor(&checks, args.json)?;
+    Ok(exit)
 }
 
-fn print_doctor(checks: &[crate::doctor::Check], json: bool) {
+fn print_doctor(checks: &[crate::doctor::Check], json: bool) -> Result<(), anyhow::Error> {
     if json {
-        println!("{}", serde_json::to_string_pretty(&checks).unwrap());
+        println!("{}", serde_json::to_string_pretty(&checks)?);
     } else {
         for c in checks {
             println!(
@@ -444,6 +447,7 @@ fn print_doctor(checks: &[crate::doctor::Check], json: bool) {
             );
         }
     }
+    Ok(())
 }
 
 fn print_plans_human(s: &serde_json::Value) {

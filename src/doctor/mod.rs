@@ -25,10 +25,16 @@ pub struct Check {
 }
 
 pub fn run_all(env: &Env, repo_path: &Path, cfg: &Config) -> Vec<Check> {
-    let repo_key = crate::paths::git_common_dir(repo_path)
-        .map(|c| crate::paths::repo_key_from_git_common_dir(&c))
-        .unwrap_or_default();
-    let checks = vec![
+    let common = crate::paths::git_common_dir(repo_path);
+    if common.is_none() {
+        return vec![Check {
+            name: "git repository",
+            status: CheckStatus::Fail,
+            detail: format!("not a git repository: {}", repo_path.display()),
+        }];
+    }
+    let repo_key = crate::paths::repo_key_from_git_common_dir(common.as_ref().unwrap());
+    vec![
         git_version_check(),
         state_dir_writable(env, &repo_key),
         socket_reachable(env, &repo_key),
@@ -38,30 +44,12 @@ pub fn run_all(env: &Env, repo_path: &Path, cfg: &Config) -> Vec<Check> {
             status: CheckStatus::Ok,
             detail: "loaded".to_string(),
         },
-    ];
-    let _ = cfg;
-    checks
-}
-
-pub fn check_git_version() -> Check {
-    git_version_check()
-}
-
-/// Pure: classify a `git --version` output string.
-pub fn git_version_check_str(version_output: &str) -> Check {
-    git_version_from_output(version_output)
+    ]
 }
 
 pub fn git_version_from_output(version_output: &str) -> Check {
     let parsed = parse_git_version(version_output);
     git_version_check_result(parsed, version_output)
-}
-
-pub fn git_version_is_ok(version_output: &str) -> bool {
-    match parse_git_version(version_output) {
-        Some((maj, min)) => (maj, min) >= (2, 38),
-        None => false,
-    }
 }
 
 pub fn parse_git_version(s: &str) -> Option<(u32, u32)> {
@@ -105,8 +93,11 @@ fn git_version_check_result(parsed: Option<(u32, u32)>, raw: &str) -> Check {
         },
         None => Check {
             name: "git version",
-            status: CheckStatus::Fail,
-            detail: format!("unparseable git version: {}", raw.trim()),
+            status: CheckStatus::Warn,
+            detail: format!(
+                "unparseable git version: {}; `worktree.merge_conflict` is disabled: needs git ≥ 2.38 for `git merge-tree --write-tree`",
+                raw.trim()
+            ),
         },
     }
 }
@@ -158,41 +149,42 @@ fn socket_reachable(env: &Env, repo_key: &str) -> Check {
             status: CheckStatus::Warn,
             detail: "no daemon running".to_string(),
         },
-        Err(_) => Check {
+        Err(e) => Check {
             name: "socket reachable",
             status: CheckStatus::Warn,
-            detail: "no daemon running".to_string(),
+            detail: format!("no daemon running: {e}"),
         },
     }
 }
 
-fn adapter_roots(env: &Env, _cfg: &Config) -> Check {
-    let root = sessions::resolve_sessions_root(env);
-    if root.exists() && root.read_dir().is_ok() {
-        Check {
-            name: "adapter roots",
-            status: CheckStatus::Ok,
-            detail: format!("{}", root.display()),
+fn adapter_roots(env: &Env, cfg: &Config) -> Check {
+    let root = if !cfg.sources.pi.sessions_dir.is_empty() {
+        let d = &cfg.sources.pi.sessions_dir;
+        if let Some(rest) = d.strip_prefix("~/") {
+            std::path::PathBuf::from(format!("{}/{}", env.home.trim_end_matches('/'), rest))
+        } else {
+            std::path::PathBuf::from(d)
         }
     } else {
-        Check {
+        sessions::resolve_sessions_root(env)
+    };
+    if !root.exists() {
+        return Check {
             name: "adapter roots",
             status: CheckStatus::Warn,
             detail: format!("absent: {}", root.display()),
-        }
+        };
     }
-}
-
-// aliases for hidden tests
-pub fn git_version_check_from_str(s: &str) -> Check {
-    git_version_from_output(s)
-}
-pub fn classify_git_version(s: &str) -> CheckStatus {
-    git_version_from_output(s).status
-}
-pub fn run_git_version_check(s: &str) -> Check {
-    git_version_from_output(s)
-}
-pub fn git_version_status(s: &str) -> CheckStatus {
-    classify_git_version(s)
+    match root.read_dir() {
+        Ok(_) => Check {
+            name: "adapter roots",
+            status: CheckStatus::Ok,
+            detail: format!("{}", root.display()),
+        },
+        Err(e) => Check {
+            name: "adapter roots",
+            status: CheckStatus::Fail,
+            detail: format!("unreadable: {e}"),
+        },
+    }
 }

@@ -49,7 +49,8 @@ impl Config {
             if cfg.is_file() {
                 let text =
                     std::fs::read_to_string(&cfg).map_err(|e| format!("reading {cfg:?}: {e}"))?;
-                let layer: RawConfig = toml::from_str(&text).map_err(to_config_error)?;
+                let layer: RawConfig = toml::from_str(&text)
+                    .map_err(|e| format!("invalid config in {}: {e}", cfg.display()))?;
                 raw = merge_raw(raw, layer);
             }
         }
@@ -57,7 +58,8 @@ impl Config {
         if repo_cfg.is_file() {
             let text = std::fs::read_to_string(&repo_cfg)
                 .map_err(|e| format!("reading {repo_cfg:?}: {e}"))?;
-            let layer: RawConfig = toml::from_str(&text).map_err(to_config_error)?;
+            let layer: RawConfig = toml::from_str(&text)
+                .map_err(|e| format!("invalid config in {}: {e}", repo_cfg.display()))?;
             raw = merge_raw(raw, layer);
         }
         Ok(from_raw(&raw))
@@ -115,10 +117,6 @@ fn user_config(home: &str) -> Option<PathBuf> {
                 .join("config.toml"),
         )
     }
-}
-
-fn to_config_error<E: std::fmt::Display>(e: E) -> String {
-    format!("invalid config: {e}")
 }
 
 /// Thresholds (Section 9).

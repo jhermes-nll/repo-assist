@@ -103,6 +103,32 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
 
+    // Debounced auto-render (M1 / §11): background thread, never blocks IPC/tick loop.
+    let _render_thread = if state.config.views.enabled {
+        let cfg = state.config.clone();
+        let store = store.clone();
+        let repo_key = repo_key.clone();
+        let stop_rx_render = stop_rx.clone();
+        Some(std::thread::spawn(move || {
+            let interval = Duration::from_millis(cfg.views.debounce_ms.max(100));
+            loop {
+                std::thread::sleep(interval);
+                if stop_rx_render.borrow().is_some() {
+                    break;
+                }
+                let env = crate::paths::Env::from_real();
+                let dir = env.views_dir(&repo_key);
+                let _ = dir;
+                match crate::ipc::server::render_views_json(&store, &repo_key, &cfg) {
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("view render failed: {e}"),
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     // Race the external stop signal (SIGINT/SIGTERM) against the accept loop: the first to fire
     // ends the daemon (Section 6: graceful shutdown).
     let accept = run_accept_loop(
