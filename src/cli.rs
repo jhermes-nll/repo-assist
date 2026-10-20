@@ -131,10 +131,7 @@ pub struct SessionsArgs {
 
 /// Open the TUI.
 #[derive(Args, Debug, Default)]
-pub struct TuiArgs {
-    #[arg(long)]
-    pub json: bool,
-}
+pub struct TuiArgs {}
 
 /// Environment checks (git version, state dir, socket, adapter roots, config).
 #[derive(Args, Debug, Default)]
@@ -372,31 +369,8 @@ fn run_tui(args: &TuiArgs) -> Result<i32, anyhow::Error> {
     if !std::io::stdout().is_terminal() {
         anyhow::bail!("ra tui requires an interactive terminal (stdout is not a TTY)");
     }
-    use crate::paths::{git_common_dir, repo_key_from_git_common_dir, Env};
-    let cwd = std::env::current_dir().context("resolving cwd")?;
-    let common_dir = git_common_dir(&cwd).ok_or_else(|| anyhow::anyhow!("not a git repository"))?;
-    let repo_key = repo_key_from_git_common_dir(&common_dir);
-    let env = Env::from_real();
-    let sock = env.socket_path(&repo_key);
-
-    // auto-spawn daemon if needed
-    use crate::ipc::client::Client;
-    match Client::connect(sock.clone()) {
-        Ok(_) => {}
-        Err(crate::ipc::client::IpcError::NotRunning(_)) => {
-            let mut child = crate::daemon::spawn_detached(&cwd)
-                .map_err(|e| anyhow::anyhow!("spawning the daemon: {e}"))?;
-            let ok = crate::daemon::wait_for_socket(&sock, std::time::Duration::from_secs(5))
-                .map_err(|e| anyhow::anyhow!("waiting for the daemon socket: {e}"))?;
-            if !ok {
-                let _ = child.try_wait();
-                anyhow::bail!("daemon did not create its socket within 5s");
-            }
-        }
-        Err(e) => anyhow::bail!("connecting to the daemon: {e}"),
-    }
-
     let _ = args;
+    let sock = resolve_sock(true)?;
     crate::tui::run(sock)?;
     Ok(0)
 }
@@ -524,7 +498,10 @@ fn print_plan_human(s: &serde_json::Value) {
 
 /// Resolve the repo (common dir, key, socket path) for the cwd, spawning the daemon when
 /// allowed and none is running (Section 7: auto-spawn; `spawn=false` disables).
-fn resolve_and_connect(spawn: bool) -> Result<crate::ipc::client::Client, anyhow::Error> {
+/// Resolve the repo (common dir, key, socket path) for the cwd, spawning the daemon when
+/// allowed and none is running (Section 7: auto-spawn; `spawn=false` disables).
+/// Returns the socket path only.
+fn resolve_sock(spawn: bool) -> Result<std::path::PathBuf, anyhow::Error> {
     use crate::paths::{git_common_dir, repo_key_from_git_common_dir, Env};
 
     let cwd = std::env::current_dir().context("resolving cwd")?;
@@ -540,7 +517,7 @@ fn resolve_and_connect(spawn: bool) -> Result<crate::ipc::client::Client, anyhow
 
     let connect_err = |e: crate::ipc::client::IpcError| e.to_string();
     match crate::ipc::client::Client::connect(sock.clone()) {
-        Ok(client) => Ok(client),
+        Ok(_) => Ok(sock),
         Err(e) if !matches!(e, crate::ipc::client::IpcError::NotRunning(_)) => Err(
             anyhow::anyhow!("connecting to the daemon: {}", connect_err(e)),
         ),
@@ -549,20 +526,23 @@ fn resolve_and_connect(spawn: bool) -> Result<crate::ipc::client::Client, anyhow
             sock.display()
         )),
         Err(_) => {
-            // Auto-spawn (Section 7): start the daemon detached, then wait for the socket.
             let mut child = crate::daemon::spawn_detached(&cwd)
                 .map_err(|e| anyhow::anyhow!("spawning the daemon: {e}"))?;
             let ok = crate::daemon::wait_for_socket(&sock, std::time::Duration::from_secs(5))
                 .map_err(|e| anyhow::anyhow!("waiting for the daemon socket: {e}"))?;
             if !ok {
-                // Let the child report why it failed, if it already exited.
                 let _ = child.try_wait()?;
                 anyhow::bail!("daemon did not create its socket within 5s");
             }
-            Ok(crate::ipc::client::Client::connect(sock)
-                .map_err(|e| anyhow::anyhow!("connecting to the daemon: {e}"))?)
+            Ok(sock)
         }
     }
+}
+
+fn resolve_and_connect(spawn: bool) -> Result<crate::ipc::client::Client, anyhow::Error> {
+    let sock = resolve_sock(spawn)?;
+    crate::ipc::client::Client::connect(sock)
+        .map_err(|e| anyhow::anyhow!("connecting to the daemon: {e}"))
 }
 
 /// `ra daemon`: run the daemon for the cwd repo, in the foreground of this process.

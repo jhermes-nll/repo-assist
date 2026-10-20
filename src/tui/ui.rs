@@ -10,7 +10,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
@@ -47,12 +47,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Rows
     let rows = app.filtered_rows();
-    let cursor = app.active_cursor();
+    let selected = app.selected_row();
     let items: Vec<ListItem> = rows
         .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let style = if i == cursor {
+        .map(|r| {
+            let style = if selected.map(|s| std::ptr::eq(s, *r)).unwrap_or(false) {
                 Style::default().fg(Color::Black).bg(Color::White)
             } else {
                 Style::default()
@@ -67,13 +66,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
     );
     frame.render_widget(list, chunks[2]);
 
-    // Filter footer
-    let filter_line = if app.filter[app.tab.index()].is_empty() {
+    // Filter footer (or detail pane content)
+    let mid = if let Some(d) = &app.detail {
+        format!("DETAIL: {}", d.lines.join(" | "))
+    } else if app.filter[app.tab.index()].is_empty() {
         String::new()
     } else {
         format!("filter: {}", app.filter[app.tab.index()])
     };
-    frame.render_widget(Paragraph::new(filter_line), chunks[3]);
+    frame.render_widget(Paragraph::new(mid), chunks[3]);
 
     // Status / key hints
     let bottom = if !app.status_line.is_empty() {
@@ -82,11 +83,4 @@ pub fn draw(frame: &mut Frame, app: &App) {
         "j/k move  Enter detail  a ack  Tab/1-4 tabs  / filter  r refresh  q quit".to_string()
     };
     frame.render_widget(Paragraph::new(bottom), chunks[4]);
-
-    // Detail overlay (simple centered-ish paragraph replacing? Just footer line appended)
-    if let Some(d) = &app.detail {
-        let p = Paragraph::new(format!("DETAIL: {} | {}", d.title, d.lines.join(" ")));
-        // render in chunks[4] override
-        frame.render_widget(p, chunks[4]);
-    }
 }

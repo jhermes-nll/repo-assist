@@ -139,8 +139,7 @@ impl App {
         &self.filter[self.tab.index()]
     }
 
-    pub fn filtered_rows(&self) -> Vec<&Row> {
-        let idx = self.tab.index();
+    pub fn filtered_rows_for(&self, idx: usize) -> Vec<&Row> {
         let f = self.filter[idx].to_lowercase();
         self.rows[idx]
             .iter()
@@ -156,6 +155,10 @@ impl App {
             .collect()
     }
 
+    pub fn filtered_rows(&self) -> Vec<&Row> {
+        self.filtered_rows_for(self.tab.index())
+    }
+
     pub fn clamp_cursor(&mut self) {
         let idx = self.tab.index();
         let n = self.filtered_rows().len();
@@ -166,18 +169,24 @@ impl App {
         }
     }
 
+    pub fn selected_row(&self) -> Option<&Row> {
+        let filtered = self.filtered_rows();
+        filtered.get(self.active_cursor()).copied()
+    }
+
     pub fn apply_snapshot(&mut self, snap: &crate::tui::client::Snapshot) {
         self.repo_key = snap.repo_key.clone();
         self.daemon_version = snap.daemon_version.clone();
         self.counts = snap.counts.clone();
         self.rows = snap.rows.clone();
+        // Clear any stale detail pane (it may reference a row from another tab/refresh).
+        self.detail = None;
         for i in 0..4 {
-            let n = self.rows[i].len();
-            if self.cursor[i] >= n && n > 0 {
-                self.cursor[i] = n - 1;
-            }
+            let n = self.filtered_rows_for(i).len();
             if n == 0 {
                 self.cursor[i] = 0;
+            } else if self.cursor[i] >= n {
+                self.cursor[i] = n - 1;
             }
         }
     }
@@ -219,6 +228,7 @@ impl App {
             }
             KeyCode::Tab => {
                 self.tab = Tab::from_index(self.tab.index() + 1);
+                self.detail = None;
                 self.clamp_cursor();
                 Some(Action::NextTab)
             }
@@ -229,26 +239,31 @@ impl App {
                     self.tab.index() - 1
                 };
                 self.tab = Tab::from_index(i);
+                self.detail = None;
                 self.clamp_cursor();
                 Some(Action::PrevTab)
             }
             KeyCode::Char('1') => {
                 self.tab = Tab::Worktrees;
+                self.detail = None;
                 self.clamp_cursor();
                 Some(Action::SelectTab(Tab::Worktrees))
             }
             KeyCode::Char('2') => {
                 self.tab = Tab::Plans;
+                self.detail = None;
                 self.clamp_cursor();
                 Some(Action::SelectTab(Tab::Plans))
             }
             KeyCode::Char('3') => {
                 self.tab = Tab::Findings;
+                self.detail = None;
                 self.clamp_cursor();
                 Some(Action::SelectTab(Tab::Findings))
             }
             KeyCode::Char('4') => {
                 self.tab = Tab::Sessions;
+                self.detail = None;
                 self.clamp_cursor();
                 Some(Action::SelectTab(Tab::Sessions))
             }
@@ -269,10 +284,7 @@ impl App {
             }
             KeyCode::Enter => {
                 // open detail from selected row if present
-                let rows = self.filtered_rows();
-                let idx = self.tab.index();
-                if !rows.is_empty() {
-                    let r = rows[self.cursor[idx].min(rows.len() - 1)];
+                if let Some(r) = self.selected_row() {
                     self.detail = Some(Detail {
                         title: r.text.clone(),
                         lines: r.cells.clone(),
@@ -283,7 +295,7 @@ impl App {
             KeyCode::Esc => {
                 if self.detail.is_some() {
                     self.detail = None;
-                    Some(Action::ClearFilter) // reuse? spec says Esc dismisses detail
+                    Some(Action::ClearFilter)
                 } else {
                     self.filter[self.tab.index()].clear();
                     self.filtering = false;

@@ -28,6 +28,9 @@ pub enum IpcError {
     /// A transport-level failure (read/write/json).
     #[error("transport error: {0}")]
     Transport(String),
+    /// A read/write timed out (retryable).
+    #[error("io timeout: {0}")]
+    Timeout(String),
 }
 
 /// A synchronous IPC client backed by a single Unix domain connection (Section 6).
@@ -45,6 +48,9 @@ impl Client {
         }
         let mut stream = UnixStream::connect(&sock)
             .map_err(|e| IpcError::Connect(sock.display().to_string(), e.to_string()))?;
+        let to = std::time::Duration::from_secs(3);
+        let _ = stream.set_read_timeout(Some(to));
+        let _ = stream.set_write_timeout(Some(to));
 
         // The first message on every connection must be `hello` (Section 6).
         write_line(&mut stream, &Request::hello(DEFAULT_CLIENT))
@@ -67,9 +73,8 @@ impl Client {
 
     /// Send one request and read its single response line (Section 6).
     pub fn call(&mut self, method: Method, params: Value) -> Result<Reply, IpcError> {
-        write_line(&mut self.stream, &Request::new(1, method, params))
-            .map_err(|e| IpcError::Transport(e.to_string()))?;
-        read_reply(&mut self.stream).map_err(|e| IpcError::Transport(e.to_string()))
+        write_line(&mut self.stream, &Request::new(1, method, params)).map_err(io_err_to_ipc)?;
+        read_reply(&mut self.stream).map_err(io_err_to_ipc)
     }
 }
 
@@ -98,4 +103,15 @@ where
         return Err(std::io::Error::other("socket closed"));
     }
     serde_json::from_str(line.trim()).map_err(|e| std::io::Error::other(format!("json: {e}")))
+}
+
+fn io_err_to_ipc(e: std::io::Error) -> IpcError {
+    if matches!(
+        e.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    ) {
+        IpcError::Timeout(e.to_string())
+    } else {
+        IpcError::Transport(e.to_string())
+    }
 }

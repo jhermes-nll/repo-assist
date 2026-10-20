@@ -6,10 +6,10 @@ use crate::tui::app::{Counts, Row, Tab};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TuiError {
-    #[error("not a git repository")]
-    NotGit,
     #[error("ipc: {0}")]
     Ipc(#[from] IpcError),
+    #[error("timeout: {0}")]
+    Timeout(String),
     #[error("daemon error [{code}]: {message}")]
     Daemon { code: String, message: String },
     #[error("transport: {0}")]
@@ -66,7 +66,11 @@ impl DataSource {
             Err(e) => {
                 // reconnect next time
                 self.client = None;
-                Err(TuiError::Ipc(e))
+                if matches!(e, IpcError::Timeout(_)) {
+                    Err(TuiError::Timeout(e.to_string()))
+                } else {
+                    Err(TuiError::Ipc(e))
+                }
             }
         }
     }
@@ -87,7 +91,7 @@ impl DataSource {
         let status = self.call(Method::Status, serde_json::Value::Null)?;
         let worktrees = self.call(Method::Worktrees, serde_json::Value::Null)?;
         let plans = self.call(Method::Plans, serde_json::Value::Null)?;
-        let findings = self.call(Method::Findings, serde_json::Value::Null)?;
+        let findings = self.call(Method::Findings, serde_json::json!({"open": true}))?;
         let sessions = self.call(Method::Sessions, serde_json::Value::Null)?;
 
         let repo_key = status
@@ -96,7 +100,7 @@ impl DataSource {
             .unwrap_or("")
             .to_string();
         let daemon_version = status
-            .get("daemon_version")
+            .get("version")
             .and_then(|v| v.as_str())
             .unwrap_or("0.1.0")
             .to_string();
@@ -118,26 +122,20 @@ impl DataSource {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize)
             .unwrap_or(snap.counts.worktrees);
-        snap.counts.plans = status
-            .get("active_plans")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or_else(|| {
-                plans
-                    .get("plans")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0)
-            });
-        snap.counts.findings = status
-            .get("open_findings")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
+        snap.counts.plans = plans
+            .get("plans")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
             .unwrap_or(0);
-        snap.counts.sessions = status
+        snap.counts.findings = findings
+            .get("findings")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        snap.counts.sessions = sessions
             .get("sessions")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
             .unwrap_or(0);
 
         // rows
@@ -198,9 +196,5 @@ impl DataSource {
                 message: msg.to_string(),
             })
         }
-    }
-
-    pub fn sock(&self) -> &std::path::Path {
-        &self.sock
     }
 }

@@ -145,9 +145,21 @@ fn tui_filter_flow_and_persistence() {
     // typing updates filter
     app.on_key(key(KeyCode::Char('a')));
     assert_eq!(app.active_filter(), "a");
-    // filtered
+
+    // filter "app" -> exactly 1
+    app.filter[Tab::Worktrees.index()] = "app".to_string();
     let fr = app.filtered_rows();
-    assert_eq!(fr.len(), 2); // both contain 'a'
+    assert_eq!(fr.len(), 1);
+
+    // case-insensitive "AP" -> 1
+    app.filter[Tab::Worktrees.index()] = "AP".to_string();
+    let fr2 = app.filtered_rows();
+    assert_eq!(fr2.len(), 1);
+
+    // cross-tab isolation: other tabs rows absent
+    app.tab = Tab::Plans;
+    assert_eq!(app.filtered_rows().len(), 0);
+    app.tab = Tab::Worktrees;
 
     // Esc clears
     app.on_key(key(KeyCode::Esc));
@@ -170,6 +182,25 @@ fn tui_filter_flow_and_persistence() {
     let ss = Snapshot::default();
     app.apply_snapshot(&ss);
     assert_eq!(app.filter[Tab::Plans.index()], "zzz");
+}
+
+#[test]
+fn tui_m3_selection_stays_visible_after_refresh() {
+    let mut app = App::new();
+    app.tab = Tab::Findings;
+    app.filter[Tab::Findings.index()] = "ap".to_string();
+    app.rows[Tab::Findings.index()] = vec!["apple".into(), "application".into(), "banana".into()];
+    app.clamp_cursor();
+    app.on_key(key(KeyCode::Char('j'))); // select "application"
+    assert_eq!(
+        app.selected_row().map(|r| r.text.as_str()),
+        Some("application")
+    );
+    let mut snap = Snapshot::default();
+    snap.rows[Tab::Findings.index()] = vec!["apple".into(), "banana".into()];
+    app.apply_snapshot(&snap);
+    assert_eq!(app.active_cursor(), 0);
+    assert_eq!(app.selected_row().map(|r| r.text.as_str()), Some("apple"));
 }
 
 #[test]
