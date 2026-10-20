@@ -12,6 +12,7 @@ pub mod ipc;
 pub mod paths;
 pub mod sources;
 pub mod store;
+pub mod tui;
 pub mod views;
 
 /// Tool name and version, kept in one place.

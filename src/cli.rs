@@ -241,7 +241,7 @@ fn spec(cmd: &Command) -> Spec {
             task: 4,
         },
         Tui(_) => Spec {
-            implemented: false,
+            implemented: true,
             task: 5,
         },
         Doctor(_) => Spec {
@@ -283,7 +283,7 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
         Command::Ack(args) => run_ack(&args),
         Command::Doctor(args) => run_doctor(&args),
         Command::Render(args) => run_render(&args),
-        _ => run_implemented(cli.command),
+        Command::Tui(args) => run_tui(&args),
     }
 }
 
@@ -363,6 +363,41 @@ fn run_drift(args: &DriftArgs) -> Result<i32, anyhow::Error> {
             anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
         }
     }
+    Ok(0)
+}
+
+/// `ra tui`: interactive terminal UI (Task 3). Refuses to start when stdout is not a TTY.
+fn run_tui(args: &TuiArgs) -> Result<i32, anyhow::Error> {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        anyhow::bail!("ra tui requires an interactive terminal (stdout is not a TTY)");
+    }
+    use crate::paths::{git_common_dir, repo_key_from_git_common_dir, Env};
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let common_dir = git_common_dir(&cwd).ok_or_else(|| anyhow::anyhow!("not a git repository"))?;
+    let repo_key = repo_key_from_git_common_dir(&common_dir);
+    let env = Env::from_real();
+    let sock = env.socket_path(&repo_key);
+
+    // auto-spawn daemon if needed
+    use crate::ipc::client::Client;
+    match Client::connect(sock.clone()) {
+        Ok(_) => {}
+        Err(crate::ipc::client::IpcError::NotRunning(_)) => {
+            let mut child = crate::daemon::spawn_detached(&cwd)
+                .map_err(|e| anyhow::anyhow!("spawning the daemon: {e}"))?;
+            let ok = crate::daemon::wait_for_socket(&sock, std::time::Duration::from_secs(5))
+                .map_err(|e| anyhow::anyhow!("waiting for the daemon socket: {e}"))?;
+            if !ok {
+                let _ = child.try_wait();
+                anyhow::bail!("daemon did not create its socket within 5s");
+            }
+        }
+        Err(e) => anyhow::bail!("connecting to the daemon: {e}"),
+    }
+
+    let _ = args;
+    crate::tui::run(sock)?;
     Ok(0)
 }
 
@@ -706,14 +741,6 @@ fn command_name(cmd: &Command) -> &'static str {
 use anyhow::Context;
 
 /// Route for subcommands recognized but not yet implemented in the current phase.
-fn run_implemented(cmd: Command) -> Result<i32, anyhow::Error> {
-    Err(anyhow::anyhow!(
-        "`{}` is not yet implemented (scheduled for Task {})",
-        command_name(&cmd),
-        spec(&cmd).task,
-    ))
-}
-
 /// `ra worktrees`: worktrees with branch, ahead/behind base, changed-file counts, last activity
 /// (Task 5) — auto-spawns the daemon, then prints a table or JSON.
 fn run_worktrees(args: &WorktreesArgs) -> Result<i32, anyhow::Error> {
