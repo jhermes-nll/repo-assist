@@ -257,14 +257,16 @@ async fn dispatch_request(
             write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
         }
         Method::Findings => {
-            let result = tokio::task::block_in_place(|| findings_json(store, &req.params))
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+            match tokio::task::block_in_place(|| findings_json(store, &req.params)) {
+                Ok(result) => write_reply(stream, &json!({ "id": req.id, "result": result })).await?,
+                Err(e) => write_reply(stream, &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } })).await?,
+            }
         }
         Method::Ack => {
-            let result = tokio::task::block_in_place(|| ack_json(store, &req.params))
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+            match tokio::task::block_in_place(|| ack_json(store, &req.params)) {
+                Ok(result) => write_reply(stream, &json!({ "id": req.id, "result": result })).await?,
+                Err(e) => write_reply(stream, &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } })).await?,
+            }
         }
         other => write_reply(
             stream,

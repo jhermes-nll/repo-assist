@@ -692,7 +692,7 @@ impl Store {
                 "SELECT id, dedupe_key, kind, severity, subject, summary, evidence, confidence,                  state, first_seen_ms, last_seen_ms, resolved_ms FROM findings");
             let mut cond = String::from("1 = 1");
             if filter.all {} else if filter.open { cond.push_str(" AND state = 'open'"); }
-            if !kind_filter.is_empty() { cond.push_str(" AND kind = ?3"); }
+            if !kind_filter.is_empty() { cond.push_str(" AND kind = ?1"); }
             sql.push_str(&format!(" WHERE {cond} ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, dedupe_key"));
             let mut stmt = conn.prepare(&sql)?;
             let params = if kind_filter.is_empty() { rusqlite::params![] } else { rusqlite::params![kind_filter] };
