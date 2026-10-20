@@ -23,7 +23,7 @@ Local, advisory, always-on daemon (`ra`) that watches a git repository across al
 
 - `src/views/`: view rendering (`render_status`, `render_plans`, `render_findings`) + atomic writes (`write::write_views`, `VIEW_CAP_LINES`); renders `views/STATUS.md`, `views/PLANS.md`, `views/FINDINGS.md` under the state dir (`ra render` on demand; daemon debounces when `[views] enabled`).
 - `src/doctor/`: environment checks (`run_all`, `Check`, `CheckStatus`, `git_version_from_output`, `parse_git_version`); run locally by `ra doctor` (not an RPC).
-- `src/tui/`: four-tab TUI (`run`, `app::{App, state}`, `client`, `ui`; depends on `ratatui` 0.29 and `crossterm` 0.28).
+- `src/tui/`: four-tab TUI (`run`, `app::{App, state}`, `client`, `ui`; depends on `ratatui` 0.29 and `crossterm` 0.28). Detail pane persists across the ~1 s refresh tick and re-resolves by row id (closing on tab switch or when the referenced row disappears); rows are tabular with headers (`path | branch | changed` for worktrees, `id | agent | last_event_ms` for sessions, etc.).
 
 ## Data model (schema.sql)
 
@@ -87,15 +87,17 @@ Not yet: `Subscribe`.
 | `fswatch.rs` | 2 | fs watcher |
 | `git_repo.rs` | 3 | git repo ops |
 | `git_source.rs` | 8 | changed-file sets |
+| `null_is_error.rs` | 1 | a NULL `tool_calls.is_error` does not break the findings workspace build |
+| `stale_socket.rs` | 1 | a present-but-unlistened socket is recovered from by auto-spawning a daemon |
 | `store.rs` | 3 | store CRUD |
 | `task_2_3.rs` | 2 | worktree event bus |
 | `task_2_4.rs` | 3 | plans data model + IPC |
 | `task_3.rs` | 3 | **drift** (drifts when a task doesn't expect it, reports nothing otherwise, unknown plan -> None) |
 | `task_4.rs` | 12 | Task 4 acceptance: pi session source, ingest, worktree mapping, `ra sessions` end-to-end |
-| `tui.rs` | 15 | four-tab TUI |
+| `tui.rs` | 18 | four-tab TUI |
 | `views_render.rs` | 9 | view rendering + atomic writes |
 
-The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (per-suite: cli 1, config 7, doctor 7, findings_engine 4, findings_kind 1, fswatch 2, git_repo 3, git_source 8, store 3, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 15, views_render 9).
+The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (per-suite: cli 1, config 7, doctor 7, findings_engine 4, findings_kind 1, fswatch 2, git_repo 3, git_source 8, null_is_error 1, stale_socket 1, store 3, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 9).
 
 ## Commits on `main`
 
@@ -122,7 +124,12 @@ The three gates are re-verified on this machine for this task: `cargo fmt --chec
 | `d457ff5` | fix(tui): make `a` ack findings end-to-end |
 | `396760a` | fix(tui): address review findings (M1-M3, S1-S5, nits) |
 
-Latest commit: `396760a` (2026-10-20).
+| `350b8df` | fix: stale socket auto-recovery; NULL is_error in findings |
+| `1c08b3b` | test: regression tests for stale socket + NULL is_error |
+| `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
+| `e41085e` | fix(test): repair tui detail-clears test |
+
+Latest commit: `e41085e`.
 
 ## Status summary
 
@@ -136,7 +143,13 @@ Latest commit: `396760a` (2026-10-20).
 
 ## Known limitations
 
-- Known limitation: bare `ra findings` (neither `--open` nor `--all`) applies no state filter, so resolved rows appear alongside open ones.
-- Stale-socket brick fixed: `UnixStream::connect` failures with `ErrorKind::ConnectionRefused` are now classified as `IpcError::Stale`, and `resolve_sock` removes the stale socket and pidfile before spawning. Other connect errors still surface.
-- `is_error` NULL fixed: `TC.is_error` is now `Option<bool>`; `checks/mod.rs` coerces with `unwrap_or(false)`, so NULL rows no longer break `check_workspace`.
-- The `ra findings` default-state limitation above (still unfixed) remains.
+- Known limitation (open): bare `ra findings` (neither `--open` nor `--all`) applies no state filter, so resolved rows appear alongside open ones.
+
+### Fixed
+
+- ~~stale-socket brick~~ — fixed in `350b8df`: `UnixStream::connect` failures with `ErrorKind::ConnectionRefused` are now classified as `IpcError::Stale`, and `resolve_sock` removes the stale socket and pidfile before spawning. Other connect errors still surface.
+- ~~`is_error` NULL~~ — fixed in `350b8df`: `TC.is_error` is now `Option<bool>`; `checks/mod.rs` coerces with `unwrap_or(false)`, so NULL rows no longer break `check_workspace`.
+
+## TUI verification
+
+The TUI was verified in a real terminal as well as by tests: four tabs rendering real data, the detail pane surviving multiple refresh ticks, `Esc`, `/` filter, tab switching, and `q` restoring the terminal cleanly. The unit tests alone had missed two real defects.

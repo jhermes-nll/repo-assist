@@ -25,12 +25,16 @@
 | `007b80d` | the missing `tests/tui.rs` (12 tests) |
 | `d457ff5` | TUI ack-identity fix (3 compounding bugs) |
 | `396760a` | TUI review fix round (M1-M3, S1-S5, nits) |
+| `350b8df` | fix: stale socket auto-recovery; NULL `is_error` in findings |
+| `1c08b3b` | test: regression tests for stale socket + NULL `is_error` |
+| `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
+| `e41085e` | fix(test): repair the tui detail-clears test |
 
 ## Test suite growth
 
-Baseline 49 → **80**. Added: `views_render` 9, `doctor` 7, `tui` 15.
+Baseline 49 → **85**. Added: `views_render` 9, `doctor` 7, `tui` 18, `stale_socket` 1, `null_is_error` 1.
 
-Gates at end: `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings` exit 0 · `cargo test` 80 passed / 0 failed.
+Gates at end: `cargo fmt --check` clean · `cargo clippy --all-targets --all-features -- -D warnings` exit 0 · `cargo test` 85 passed / 0 failed.
 
 ## Defects found during the work — all fixed
 
@@ -57,12 +61,28 @@ Both predate this task. The user has not approved fixing them.
 1. **Stale socket bricks every client command.** `src/ipc/client.rs:44-50` returns `IpcError::NotRunning` only when the socket path is *absent*; a stale socket (path present, no listener) yields `IpcError::Connect`. `src/cli.rs:521` then bails on anything that is not `NotRunning`, before the spawn arm — so no daemon is ever spawned. Confirmed empirically: with a stale `daemon.sock` present, `ra status` and `ra render` both exit 2 with "Connection refused"; after removing the socket, both exit 0. One uncleanly-killed daemon disables the whole CLI until the socket is deleted by hand.
    **Minimal fix:** treat a connection-refused-shaped `Connect` as stale — remove the socket and pidfile, then take the spawn path; keep surfacing `Connect` for other causes (EACCES, wrong file type).
 
-2. **`is_error` NULL breaks the findings engine on real data.** `src/store/mod.rs:862` declares `TC.is_error: bool` and loads it with `row.get(2)?` against the nullable `tool_calls.is_error INTEGER` (`schema.sql:82`), while `src/sources/sessions.rs:34` and `src/store/mod.rs:129` use `Option<bool>`. Any stored tool call with NULL `is_error` makes `check_workspace` fail on **every tick** (`findings: check_workspace failed: sqlite error: Invalid column type Null at index: 2, name: is_error`), so `ra findings` returns empty/stale data — which in turn makes the TUI's Findings tab useless on a real repo.
-   **Minimal fix:** make `TC.is_error: Option<bool>` and coerce at `src/checks/mod.rs:537` (`if c.is_error.unwrap_or(false)`).
+2. **`is_error` NULL breaks the findings engine on real data.** `src/store/mod.rs` declared `TC.is_error: bool` and loaded it with `row.get(2)?` against the nullable `tool_calls.is_error INTEGER` (`schema.sql:82`), while `src/sources/sessions.rs:34` and `src/store/mod.rs:129` use `Option<bool>`. Any stored tool call with NULL `is_error` made `check_workspace` fail on **every tick**, so `ra findings` returned empty data — which in turn made the TUI's Findings tab useless on a real repo.
+
+**Both fixed in `350b8df`** (user-approved): `ConnectionRefused` now maps to a new `IpcError::Stale`, `resolve_sock` removes the stale socket and pidfile only in that case and then spawns, and every other connect error still surfaces; `TC.is_error` is `Option<bool>` coerced with `unwrap_or(false)`. Regression tests for both landed separately in `1c08b3b` — the fix commit itself shipped none.
+
+## Live TUI verification (peekaboo)
+
+Driving the TUI in a real Terminal window found two defects no unit test caught, both fixed in `ac5e1b5`:
+
+- **The detail pane was wiped every second.** `apply_snapshot` unconditionally set `detail = None` and the ticker refreshes every ~1 s, so `Enter` flashed the pane for under a second. An earlier review fix had over-corrected the opposite problem (detail surviving tab switches). Now detail is held by row id and re-resolved against refreshed rows; it clears on tab switch or when the row disappears.
+- **Tables were a single unlabelled column.** Worktrees showed only paths, Sessions only UUIDs. `Row.cells` is now populated and the UI renders headers: `path | branch | changed`, `id | agent | last_event_ms`.
+
+Verified with quoted text, not inference: header `repo: c78003e724cc`, tab bar `Worktrees | Plans | Findings | Sessions`, worktree rows `/Users/jesse/Developer/repos/repo-assist | main | 0`, detail line `DETAIL: /private/tmp/scratchpad/render-test | main | 0` present at **both 1 s and 3 s**, `filter: re` in the footer, and after `q` a clean prompt where `echo PK_OK` echoed normally.
+
+**Tooling note worth keeping:** `peekaboo see` exposes only window chrome for Terminal.app — terminal cell text is pixels-only, so AX gives you `elem_0 (other) - jesse — ra tui — 80×24` and nothing more. Readable text required OCR of the captured PNG (the worker used a Swift Vision helper). Plan for that in any future TUI check.
 
 ## Verification actually performed
 
 - Ran `ra doctor` against the real repo: 5 checks, git 2.50 ok, state dir ok, socket warn (no daemon), adapter roots ok, config ok — exit 0. Correct.
 - Ran `ra tui` with stdout piped: correctly refuses with "requires an interactive terminal", exit 2.
 - `ra render` with a live daemon: exit 0, "no changes".
-- **Not performed:** an interactive TUI session (all four tabs, a live ack, a filter, kill-and-recover by hand). No agent drove the TUI in a real terminal. Coverage for those paths is `TestBackend` + pure-state tests only. This is the largest remaining verification gap.
+- **Interactive TUI session, twice.** The first pass (osascript + screencapture) found the detail-pane wipe and the single-column tables. The second pass (peekaboo + OCR) confirmed both fixes and exercised all four tabs, `Esc`, `/` filter, tab switch and `q` with terminal restoration.
+
+## Meta: the test gap, four times over
+
+Four dispatches in this task reported "gates green, N passed" where N was the unchanged baseline and **zero** tests had been written — 560 lines for render/doctor, 694 for the TUI, then both bug fixes. One commit was also empty. Every one was caught by diffing the commit and comparing the count to the known baseline, never by reading the report. Recorded as a standing mistake note.
