@@ -159,7 +159,14 @@ impl DataSource {
         if let Some(arr) = findings.get("findings").and_then(|v| v.as_array()) {
             for f in arr {
                 let t = f.get("summary").and_then(|v| v.as_str()).unwrap_or("?");
-                frows.push(Row::new(t.to_string()));
+                let id = if let Some(n) = f.get("id").and_then(|v| v.as_i64()) {
+                    n.to_string()
+                } else if let Some(s) = f.get("id").and_then(|v| v.as_str()) {
+                    s.to_string()
+                } else {
+                    "?".to_string()
+                };
+                frows.push(Row::with_id(id, t.to_string()));
             }
         }
         let mut srows = Vec::new();
@@ -178,8 +185,19 @@ impl DataSource {
 
     pub fn ack_finding(&mut self, id: &str) -> Result<(), TuiError> {
         let r = self.call(Method::Ack, serde_json::json!({ "id": id }))?;
-        let _ = r;
-        Ok(())
+        let ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if ok {
+            Ok(())
+        } else {
+            let msg = r
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("nothing acked");
+            Err(TuiError::Daemon {
+                code: "ack_failed".to_string(),
+                message: msg.to_string(),
+            })
+        }
     }
 
     pub fn sock(&self) -> &std::path::Path {

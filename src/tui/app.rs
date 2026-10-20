@@ -56,6 +56,16 @@ impl Row {
             cells: vec![t],
         }
     }
+
+    pub fn with_id(id: impl Into<String>, text: impl Into<String>) -> Self {
+        let i = id.into();
+        let t = text.into();
+        Self {
+            id: i,
+            text: t.clone(),
+            cells: vec![t],
+        }
+    }
 }
 
 impl From<String> for Row {

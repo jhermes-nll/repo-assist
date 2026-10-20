@@ -44,12 +44,14 @@ pub fn run(sock: std::path::PathBuf) -> anyhow::Result<()> {
                                 Err(e) => app.status_line = e.to_string(),
                             },
                             Action::Ack => {
-                                // ack currently selected finding by id is handled via row id
                                 let rows = app.filtered_rows();
                                 let cur = app.active_cursor();
                                 if !rows.is_empty() {
                                     let id = rows[cur.min(rows.len() - 1)].id.clone();
-                                    let _ = ds.ack_finding(&id);
+                                    match ds.ack_finding(&id) {
+                                        Ok(()) => app.status_line = format!("acked finding {id}"),
+                                        Err(e) => app.status_line = format!("nothing acked: {e}"),
+                                    }
                                 }
                                 match ds.fetch_all() {
                                     Ok(snap) => app.apply_snapshot(&snap),

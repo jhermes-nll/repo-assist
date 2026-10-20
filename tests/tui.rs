@@ -264,3 +264,121 @@ fn tui_reconnect_survives_daemon_restart() {
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(ds.fetch_all().is_ok(), "fetch after restart should succeed");
 }
+
+#[test]
+fn tui_ack_finding_end_to_end() {
+    use repo_assist::paths::repo_key_from_git_common_dir;
+    use repo_assist::paths::Env;
+    use repo_assist::store::{FindingCandidate, FindingsFilter, Store};
+
+    let repo = common::GitRepo::new();
+    let state = tempfile::TempDir::new().unwrap();
+    let runtime = tempfile::TempDir::new().unwrap();
+    let env = Env::with(
+        "/tmp",
+        Some(state.path().display().to_string()),
+        Some(runtime.path().display().to_string()),
+    );
+    let key = repo_assist::paths::git_common_dir(repo.path())
+        .map(|c| repo_key_from_git_common_dir(&c))
+        .unwrap_or_else(|| "manual".to_string());
+    let sf = env.state_files(&key);
+    std::fs::create_dir_all(&sf.dir).unwrap();
+    let store = Store::open(&sf.db).unwrap();
+    let c = FindingCandidate::new(
+        "plan.drift",
+        "k1",
+        "k1",
+        "k1",
+        "warn",
+        serde_json::json!({}),
+        "explicit",
+    );
+    store.sync_findings(vec![c], 1000).unwrap();
+    let rows0 = store
+        .list_findings(&FindingsFilter {
+            open: true,
+            all: false,
+            kind: None,
+        })
+        .unwrap();
+    assert!(!rows0.is_empty());
+    let expected_id = rows0[0].id.to_string();
+
+    let sock = runtime
+        .path()
+        .join("repo-assist")
+        .join(format!("{key}.sock"));
+
+    let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
+    let _g = spawn_daemon(&ra_bin, repo.path(), state.path(), runtime.path());
+    wait_socket(&sock);
+
+    let mut ds = DataSource::new(sock.clone());
+    let snap = ds.fetch_all().expect("fetch");
+    let frows = &snap.rows[repo_assist::tui::app::Tab::Findings.index()];
+    assert!(!frows.is_empty(), "expected at least one finding row");
+    assert_eq!(frows[0].id, expected_id, "row id should be real finding id");
+
+    // ack through TUI client path
+    ds.ack_finding(&frows[0].id).expect("ack ok");
+
+    // fetch again, state acked
+    let snap2 = ds.fetch_all().expect("fetch2");
+    // need daemon finding state; query store direct
+    let store2 = Store::open(&sf.db).unwrap();
+    let rows1 = store2
+        .list_findings(&FindingsFilter {
+            open: false,
+            all: true,
+            kind: None,
+        })
+        .unwrap();
+    assert!(rows1
+        .iter()
+        .any(|r| r.id.to_string() == expected_id && r.state == "acked"));
+    let _ = snap2;
+}
+
+#[test]
+fn tui_ack_finding_bogus_fails() {
+    use repo_assist::paths::repo_key_from_git_common_dir;
+    use repo_assist::paths::Env;
+    use repo_assist::store::{FindingCandidate, Store};
+
+    let repo = common::GitRepo::new();
+    let state = tempfile::TempDir::new().unwrap();
+    let runtime = tempfile::TempDir::new().unwrap();
+    let env = Env::with(
+        "/tmp",
+        Some(state.path().display().to_string()),
+        Some(runtime.path().display().to_string()),
+    );
+    let key = repo_assist::paths::git_common_dir(repo.path())
+        .map(|c| repo_key_from_git_common_dir(&c))
+        .unwrap_or_else(|| "manual".to_string());
+    let sf = env.state_files(&key);
+    std::fs::create_dir_all(&sf.dir).unwrap();
+    let store = Store::open(&sf.db).unwrap();
+    let c = FindingCandidate::new(
+        "plan.drift",
+        "k1",
+        "k1",
+        "k1",
+        "warn",
+        serde_json::json!({}),
+        "explicit",
+    );
+    store.sync_findings(vec![c], 1000).unwrap();
+
+    let sock = runtime
+        .path()
+        .join("repo-assist")
+        .join(format!("{key}.sock"));
+    let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
+    let _g = spawn_daemon(&ra_bin, repo.path(), state.path(), runtime.path());
+    wait_socket(&sock);
+    let mut ds = DataSource::new(sock.clone());
+    let _ = ds.fetch_all();
+    assert!(ds.ack_finding("999999").is_err(), "bogus ack should fail");
+}

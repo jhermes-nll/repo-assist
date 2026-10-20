@@ -805,8 +805,14 @@ fn findings_json(store: &Store, params: &Value) -> Result<Value, crate::store::S
 
 /// Build the `Method::Ack` result: mark one finding `acked` (by store id).
 fn ack_json(store: &Store, params: &Value) -> Result<Value, crate::store::StoreError> {
-    let id = params.get("id").and_then(Value::as_str).unwrap_or("");
+    let id = if let Some(s) = params.get("id").and_then(Value::as_str) {
+        s.to_string()
+    } else if let Some(n) = params.get("id").and_then(Value::as_i64) {
+        n.to_string()
+    } else {
+        String::new()
+    };
     let now = crate::sources::git::now_ms();
-    let ok = store.ack_finding(id, now)?;
+    let ok = store.ack_finding(&id, now)?;
     Ok(json!({ "ok": ok, "id": id }))
 }
