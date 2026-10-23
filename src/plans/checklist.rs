@@ -5,7 +5,7 @@
 //! files (`TODO.md`, `PLAN.md`, `docs/plans/**/*.md`); checks that require `expected_paths`
 //! simply skip these tasks.
 
-use crate::plans::{parse_checkbox, strip_heading, ParsedPlan, Task};
+use crate::plans::{parse_checkbox, strip_heading, task_id, ParsedPlan, Task};
 
 /// Parse generic-checklist **content** (see module docs).
 pub fn parse(text: &str) -> ParsedPlan {
@@ -25,23 +25,28 @@ pub fn parse(text: &str) -> ParsedPlan {
             }
         }
 
-        if let Some(checked) = parse_checkbox(trimmed) {
-            let declared = if checked { "done" } else { "open" };
-            let label = checkbox_label(trimmed);
-            let ordinal = tasks.len() as i64 + 1;
-            tasks.push(Task {
-                id: ordinal.to_string(),
-                plan_id: String::new(),
-                ordinal,
-                title: if label.is_empty() {
-                    format!("Task {ordinal}")
-                } else {
-                    label
-                },
-                declared: declared.to_string(),
-                expected_paths: Vec::new(),
-                depends_on: Vec::new(),
-            });
+        // Only top-level bullets (zero indentation) are tasks; nested checkboxes belong to
+        // the task above them and must not become separate tasks.
+        if line.starts_with('-') {
+            if let Some(checked) = parse_checkbox(line) {
+                let declared = if checked { "done" } else { "open" };
+                let label = checkbox_label(line);
+                let ordinal = tasks.len() as i64 + 1;
+                let plan_id = String::new();
+                tasks.push(Task {
+                    id: task_id(&plan_id, ordinal),
+                    plan_id,
+                    ordinal,
+                    title: if label.is_empty() {
+                        format!("Task {ordinal}")
+                    } else {
+                        label
+                    },
+                    declared: declared.to_string(),
+                    expected_paths: Vec::new(),
+                    depends_on: Vec::new(),
+                });
+            }
         }
     }
 

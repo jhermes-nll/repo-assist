@@ -21,8 +21,11 @@ pub mod superpowers;
 /// A single parsed task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
-    /// Stable task id (e.g. `1`, `2`, …); the heading number for superpowers, the per-plan
-    /// index for the generic checklist format.
+    /// Plan-scoped, stable task id of the form `{plan_id}:{ordinal}`.
+    ///
+    /// Parsers leave `plan_id` empty, so the provisional id ends up `:{ordinal}`; the plan
+    /// importer assigns the real plan id via [`Task::set_plan_id`], which rewrites this field.
+    /// This keeps `tasks.id` (a global primary key) unique across plans.
     pub id: String,
     /// The plan this task belongs to (populated by the plan importer, not the parser).
     pub plan_id: String,
@@ -39,8 +42,17 @@ pub struct Task {
 }
 
 impl Task {
+    /// Assign the owning plan id and re-derive the plan-scoped [`Task::id`] (`{plan_id}:{ordinal}`).
+    pub fn set_plan_id(&mut self, plan_id: &str) {
+        self.plan_id = plan_id.to_string();
+        self.id = task_id(plan_id, self.ordinal);
+    }
+
     /// Borrow this task as a `store::TaskRow` (for the plan importer to upsert).
-    pub fn to_task_row<'a>(&'a self) -> TaskRow<'a> {
+    ///
+    /// The row's `id` is the plan-scoped [`Task::id`]; call [`Task::set_plan_id`] first so it
+    /// includes the owning plan and cannot collide with another plan's task.
+    pub fn to_task_row(&self) -> TaskRow<'_> {
         TaskRow {
             id: &self.id,
             plan_id: &self.plan_id,
@@ -51,6 +63,11 @@ impl Task {
             depends_on: &self.depends_on,
         }
     }
+}
+
+/// Build the plan-scoped, stable task id `{plan_id}:{ordinal}`.
+pub(crate) fn task_id(plan_id: &str, ordinal: i64) -> String {
+    format!("{plan_id}:{ordinal}")
 }
 
 /// A parsed plan document: a title, an ordered list of [`Task`]s, and any warnings logged
@@ -145,8 +162,10 @@ pub(crate) fn strip_heading(line: &str, level: usize) -> Option<String> {
 
 /// Parse a `- [ ]` / `- [x]` checkbox line, returning whether it is checked (false for `- [ ]`).
 ///
-/// The label after the closing `]` is ignored here; callers extract it separately. Unknown
-/// markers (e.g. `- [~]`) are treated as unchecked.
+/// Only a genuine checkbox marker counts: the bracket content must be a single `x`/`X`/space
+/// (or empty) and must be followed by whitespace or end-of-line. That keeps markdown link
+/// bullets such as `- [spec](http://x)` from being misread as unchecked checkboxes. The label
+/// after the closing `]` is ignored here; callers extract it separately.
 pub(crate) fn parse_checkbox(line: &str) -> Option<bool> {
     let s = line
         .trim_start()
@@ -154,12 +173,14 @@ pub(crate) fn parse_checkbox(line: &str) -> Option<bool> {
         .trim_start()
         .strip_prefix('[')?;
     let close = s.find(']')?;
-    let marker = s[..close].trim();
-    if marker.is_empty() {
-        return Some(false); // `- [ ]`
+    let marker = &s[..close];
+    if !(marker.is_empty() || matches!(marker, "x" | "X" | " ")) {
+        return None;
     }
-    match marker.chars().next().unwrap() {
-        'x' | 'X' => Some(true),
-        _ => Some(false),
+    if let Some(next) = s[close + 1..].chars().next() {
+        if !next.is_whitespace() {
+            return None;
+        }
     }
+    Some(marker == "x" || marker == "X")
 }

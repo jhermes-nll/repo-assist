@@ -195,6 +195,79 @@ fn to_task_row_mirrors_source_fields() {
     assert_eq!(row.title, "Add limiter");
 }
 
+/// Task ids are plan-scoped, so two plans whose tasks share heading numbers get distinct ids
+/// once the importer assigns the plan id (the `tasks.id` primary key is global).
+#[test]
+fn task_ids_are_plan_scoped_across_plans() {
+    let text = "### Task 1: same heading\n- [ ] a\n### Task 2: same heading\n- [ ] b\n";
+    let mut plan_a = parse_plan(text);
+    let mut plan_b = parse_plan(text);
+
+    for t in &mut plan_a.tasks {
+        t.set_plan_id("plan-a");
+    }
+    for t in &mut plan_b.tasks {
+        t.set_plan_id("plan-b");
+    }
+
+    assert_eq!(plan_a.tasks[0].id, "plan-a:1");
+    assert_eq!(plan_a.tasks[1].id, "plan-a:2");
+    assert_eq!(plan_b.tasks[0].id, "plan-b:1");
+    assert_eq!(plan_b.tasks[1].id, "plan-b:2");
+    assert_ne!(
+        plan_a.tasks[0].to_task_row().id,
+        plan_b.tasks[0].to_task_row().id
+    );
+
+    // The generic checklist parser scopes its ids the same way.
+    let mut checklist = parse_plan("# TODO\n- [ ] one\n- [x] two\n");
+    for t in &mut checklist.tasks {
+        t.set_plan_id("todo-plan");
+    }
+    assert_eq!(checklist.tasks[0].id, "todo-plan:1");
+    assert_eq!(checklist.tasks[1].id, "todo-plan:2");
+}
+
+/// An unterminated backtick keeps the paths already collected on the directive line instead
+/// of discarding the whole declaration.
+#[test]
+fn unterminated_backtick_keeps_collected_paths() {
+    let text = "### Task 1: paths\nCreate: `src/a.rs` and `src/b.rs\n";
+    let plan = parse_plan(text);
+
+    assert_eq!(plan.tasks.len(), 1);
+    assert!(
+        plan.tasks[0]
+            .expected_paths
+            .contains(&"src/a.rs".to_string()),
+        "the path before the unterminated span must survive"
+    );
+    assert_eq!(plan.tasks[0].expected_paths, vec!["src/a.rs", "src/b.rs"]);
+}
+
+/// A markdown link bullet (`- [spec](http://x)`) is not a checkbox, so a fully-ticked task
+/// that contains one is still reported `done`.
+#[test]
+fn markdown_link_bullet_does_not_count_as_a_checkbox() {
+    let text = "### Task 1: done with a link\n- [x] real work\n- [spec](http://x)\n";
+    let plan = parse_plan(text);
+
+    assert_eq!(plan.tasks.len(), 1);
+    assert_eq!(plan.tasks[0].declared, "done");
+    assert_eq!(plan.declared_state(), "done");
+}
+
+/// Indented checkboxes are nested under their parent and must not become top-level tasks.
+#[test]
+fn indented_checkbox_does_not_become_a_separate_task() {
+    let text = "# TODO\n- [ ] parent\n    - [ ] nested child\n  - [x] another child\n";
+    let plan = parse_plan(text);
+
+    assert_eq!(plan.task_count(), 1);
+    assert_eq!(plan.tasks[0].title, "parent");
+    assert_eq!(plan.tasks[0].declared, "open");
+}
+
 /// `expected_paths` cleaning: strip `:line`/`:line-line` ranges and trailing `(…)` notes.
 #[test]
 fn path_declaration_strips_line_ranges_and_notes() {
@@ -288,9 +361,9 @@ fn fuzz_lite_never_panics() {
         let plan = parse_plan(&buf);
         // Invariants: task_count() and declared_state() are well-defined for any plan.
         assert!(plan.task_count() <= buf.chars().count());
-        assert_eq!(
+        assert!(
             plan.declared_state() == "open" || plan.declared_state() == "done",
-            true
+            "declared_state must be open or done"
         );
     }
 

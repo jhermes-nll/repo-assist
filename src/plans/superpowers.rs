@@ -11,7 +11,7 @@
 //! warning here — the auto [`crate::plans::parse_plan`] decides it is "unknown" and warns).
 
 use crate::plans::strip_heading;
-use crate::plans::{ParsedPlan, Task};
+use crate::plans::{task_id, ParsedPlan, Task};
 
 /// The `Create:`/`Modify:`/`Test:`/`Delete:`/`Update:` directive keywords that introduce a
 /// path declaration within a task.
@@ -26,7 +26,6 @@ pub fn parse(text: &str) -> ParsedPlan {
 
     // Per-task accumulator fields.
     let mut have_task = false;
-    let mut cur_id = String::new();
     let mut cur_title = String::new();
     let mut cur_checked: u32 = 0;
     let mut cur_total: u32 = 0;
@@ -47,10 +46,9 @@ pub fn parse(text: &str) -> ParsedPlan {
         }
 
         // A task heading (`# {2,4} Task \d+`)? Start a new task (flush the previous one).
-        if let Some((num, title)) = parse_task_heading(trimmed) {
+        if let Some((_num, title)) = parse_task_heading(trimmed) {
             if have_task {
                 tasks.push(task_from(
-                    &cur_id,
                     &cur_title,
                     cur_checked,
                     cur_total,
@@ -58,7 +56,6 @@ pub fn parse(text: &str) -> ParsedPlan {
                     tasks.len() as i64 + 1,
                 ));
             }
-            cur_id = num;
             cur_title = title;
             cur_checked = 0;
             cur_total = 0;
@@ -82,7 +79,6 @@ pub fn parse(text: &str) -> ParsedPlan {
     }
     if have_task {
         tasks.push(task_from(
-            &cur_id,
             &cur_title,
             cur_checked,
             cur_total,
@@ -98,15 +94,16 @@ pub fn parse(text: &str) -> ParsedPlan {
 
 /// Build one `Task` from its accumulated state.
 #[inline]
-fn task_from(id: &str, title: &str, checked: u32, total: u32, paths: &[String], ordinal: i64) -> Task {
+fn task_from(title: &str, checked: u32, total: u32, paths: &[String], ordinal: i64) -> Task {
     let declared = if total > 0 && checked == total {
         "done"
     } else {
         "open"
     };
+    let plan_id = String::new();
     Task {
-        id: id.to_string(),
-        plan_id: String::new(),
+        id: task_id(&plan_id, ordinal),
+        plan_id,
         // 1-based ordering (see store::TaskRow.ordinal).
         ordinal,
         title: title.to_string(),
@@ -187,14 +184,18 @@ fn extract_backticked(s: &str) -> Option<Vec<String>> {
     let mut rest = s;
     while let Some(open) = rest.find('`') {
         let after = &rest[open + 1..];
-        let close = after.find('`')?;
-        let inner = &after[..close];
+        // A missing closing backtick is tolerated: take the rest of the line as the path so
+        // paths already collected on this directive are not discarded.
+        let (inner, next) = match after.find('`') {
+            Some(close) => (&after[..close], &after[close + 1..]),
+            None => (after, ""),
+        };
         if let Some(cleaned) = clean_path(inner) {
             if !cleaned.is_empty() {
                 paths.push(cleaned);
             }
         }
-        rest = &after[close + 1..];
+        rest = next;
     }
     if paths.is_empty() {
         None
