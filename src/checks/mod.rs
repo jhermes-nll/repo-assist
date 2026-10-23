@@ -319,17 +319,17 @@ fn check_worktree_abandoned(ctx: &CheckCtx) -> Vec<FindingCandidate> {
 fn check_plan_overlap(ctx: &CheckCtx) -> Vec<FindingCandidate> {
     let patterns = ctx.config.ignore_paths.clone();
     let ws = ctx.workspace.worktrees.clone();
-    // (plan, worktree path) for each active plan with a changed set.
-    let mut plan_paths: Vec<(&PlanInfo, String)> = Vec::new();
+    // (plan, worktree) for each active plan that has a changed set. The WtInfo reference
+    // is kept so the double loop below uses it directly, no `.unwrap()` search.
+    let mut plan_paths: Vec<(&PlanInfo, &WtInfo)> = Vec::new();
     for p in &ctx.workspace.plans {
         if p.state != "active" {
             continue;
         }
-        let wt = plan_worktree(&ws, p);
-        if let Some(wt) = wt {
+        if let Some(wt) = plan_worktree(&ws, p) {
             let changed = changed_filter(wt, &patterns);
             if !changed.is_empty() {
-                plan_paths.push((p, wt.path.clone()));
+                plan_paths.push((p, wt));
             }
         }
     }
@@ -338,11 +338,11 @@ fn check_plan_overlap(ctx: &CheckCtx) -> Vec<FindingCandidate> {
         for j in (i + 1)..plan_paths.len() {
             let (a, wa) = &plan_paths[i];
             let (b, wb) = &plan_paths[j];
-            if wa == wb {
+            if wa.path == wb.path {
                 continue; // same worktree -> path intersection is a drift concern, not an overlap.
             }
-            let wa_changed = changed_filter(ws.iter().find(|w| w.path == *wa).unwrap(), &patterns);
-            let wb_changed = changed_filter(ws.iter().find(|w| w.path == *wb).unwrap(), &patterns);
+            let wa_changed = changed_filter(wa, &patterns);
+            let wb_changed = changed_filter(wb, &patterns);
             let set_b: std::collections::BTreeSet<&String> = wb_changed.iter().collect();
             let intersection: Vec<String> = wa_changed
                 .iter()
