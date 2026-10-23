@@ -4,6 +4,11 @@
 //! dispatcher that recognizes every documented subcommand but runs only those implemented in
 //! the current phase. See [`repo_assist::cli`].
 
+//! Spec (DoD #1, workorder 20261022-20): deny unwrap/expect so spec-fidelity issues
+//! surface as clippy `-D warnings` compile errors, never as runtime panics.
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+
 use clap::Parser;
 
 fn main() {

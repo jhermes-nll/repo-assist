@@ -372,7 +372,13 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
         for row in worktrees.iter_mut() {
             let p: Option<&str> = row.get("path").and_then(|v| v.as_str());
             if let Some((count, last)) = p.and_then(|s| dirty.get(s)).copied() {
-                let obj = row.as_object_mut().expect("worktree row is an object");
+                let obj = match row.as_object_mut() {
+                    Some(obj) => obj,
+                    None => {
+                        // unreachable: every row was built with an object shape
+                        unreachable!("worktree row must be an object")
+                    }
+                };
                 obj.insert("dirty".into(), json!(count > 0));
                 obj.insert("dirty_events".into(), json!(count));
                 obj.insert(
@@ -547,9 +553,10 @@ fn plan_json(store: &Store, id: &str) -> Result<Option<Value>, crate::store::Sto
 /// skipped. Output is ordered by plan id, then path (stable for tests).
 fn plan_drift_value(store: &Store) -> Result<Value, crate::store::StoreError> {
     use crate::sources::git::changed_file_set;
-    let refs = store
-        .plan_worktrees()
-        .expect("read plan<->worktree references");
+    // plan_worktrees() already returns `Result<_, StoreError>`, so `?` propagates the
+    // genuine SQL failure directly (matching the function's return type) instead of
+    // panicking, as the original .expect() did.
+    let refs = store.plan_worktrees()?;
 
     // Drift per plan: (plan_id, worktree_path, drifted_rows). Ordering is by plan id.
     let mut per_plan: Vec<(String, String, Vec<crate::store::DriftFile>)> = Vec::new();
