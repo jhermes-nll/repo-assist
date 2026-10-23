@@ -118,8 +118,10 @@ step (`worktree_path` is equal to or a prefix of canonicalized cwd) still works 
 simply yields *no* match for these sessions, which is the correct, honest behaviour (a session is
 not force-joined to a worktree it doesn't belong to).
 
-Action: the real subtext repo (`~/.dev/subtext`) is being scaffolded freshly (see below) to feed
-`tests/` with *known* worktrees; fixtures use the live `~/.pi` data.
+Action: the real subtext repo was **not** scaffolded (no `~/dev/subtext` exists on this
+machine). The card's "see below" pointer is therefore a dead reference; it has been removed
+and the item left in its verified-❌ state. Test fixtures that *do* drive the daemon use
+synthetic repos built in `tests/common.rs` (`GitRepo::new()`), not a subtext clone.
 
 ---
 
