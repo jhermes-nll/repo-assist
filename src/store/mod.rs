@@ -684,7 +684,7 @@ impl Store {
     }
 
     /// List findings (§9), optionally restricted to `--open` (only state='open') or `--all`
-    /// (any state), optionally filtered by `kind`. Ordered by severity (error first) then key.
+    /// (any state); with neither flag, resolved rows are excluded (open + acked remain).
     pub fn list_findings(&self, filter: &FindingsFilter) -> Result<Vec<FindingRow>, StoreError> {
         self.read(|conn| {
             let kind_filter = filter.kind.as_deref().unwrap_or("");
@@ -692,6 +692,7 @@ impl Store {
                 "SELECT id, dedupe_key, kind, severity, subject, summary, evidence, confidence,                  state, first_seen_ms, last_seen_ms, resolved_ms FROM findings");
             let mut cond = String::from("1 = 1");
             if filter.all {} else if filter.open { cond.push_str(" AND state = 'open'"); }
+            else { cond.push_str(" AND state != 'resolved'"); }
             if !kind_filter.is_empty() { cond.push_str(" AND kind = ?1"); }
             sql.push_str(&format!(" WHERE {cond} ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, dedupe_key"));
             let mut stmt = conn.prepare(&sql)?;

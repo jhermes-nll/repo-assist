@@ -44,10 +44,14 @@ fn resolve(store: &Store, now: i64) -> Vec<repo_assist::store::FindingDelta> {
     store.sync_findings(vec![], now).unwrap()
 }
 
-/// The persisted row for one dedupe_key, or None.
+/// The persisted row for one dedupe_key, or None (queries with `all: true` so this
+/// helper is neutral to state — tests assert state explicitly).
 fn find(store: &Store, key: &str) -> Option<FindingRow> {
     store
-        .list_findings(&FindingsFilter::default())
+        .list_findings(&FindingsFilter {
+            all: true,
+            ..Default::default()
+        })
         .unwrap()
         .into_iter()
         .find(|f| f.dedupe_key == key)
@@ -203,4 +207,39 @@ fn sync_findings_keeps_the_most_severe_view_within_a_run() {
     );
     assert!(deltas[0].opened && deltas[0].severity == "error");
     assert_eq!(find(&store, key).unwrap().severity, "error");
+}
+
+/// The bare findings view (neither --open nor --all) must exclude resolved rows.
+#[test]
+fn bare_findings_excludes_resolved() {
+    let repo = common::GitRepo::new();
+    let store = open_store(&repo);
+    let key = "worktree.overlap:bare:resolved";
+
+    // open then resolve it
+    let deltas = run_checks(&store, vec![cand("worktree.overlap", key, "error")], 1_000);
+    assert!(deltas[0].opened);
+    resolve(&store, 2_000);
+    assert_eq!(find(&store, key).unwrap().state, "resolved");
+
+    // default filter (neither --open nor --all) excludes it ...
+    assert!(
+        store
+            .list_findings(&FindingsFilter::default())
+            .unwrap()
+            .is_empty(),
+        "a bare findings view excludes resolved rows"
+    );
+    // ... while --all still surfaces it.
+    assert_eq!(
+        store
+            .list_findings(&FindingsFilter {
+                all: true,
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+        1,
+        "--all still surfaces resolved rows"
+    );
 }
