@@ -6,6 +6,7 @@
 //! changed-file set (`worktree_files`: committed | staged | unstaged | untracked), and marks
 //! vanished worktrees not present.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -177,6 +178,47 @@ fn replace_files(
 }
 
 /// Sync worktrees + changed-file sets into the store (Task 2.1 entry point).
+/// The commit history of one worktree (Section 9): `sha` -> the set of paths each commit
+/// introduced, for commits in `merge_base..HEAD` on the plan branch.
+///
+/// Returns an empty map when git returns nothing (the worktree is at the base ref).
+pub fn plan_commit_history(wt: &Path, base_ref: Option<&str>) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let Some(base) = base_ref else {
+        return out;
+    };
+    // Reverse the log so an earlier commit is listed first; newest wins on collision.
+    let Some(data) = git_ro(
+        wt,
+        &[
+            "log",
+            "--no-merges",
+            "--reverse",
+            "--format=%H",
+            "--name-only",
+            &format!("{base}...HEAD"),
+        ],
+    ) else {
+        return out;
+    };
+    let mut active: Option<String> = None;
+    for line in data.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // A line that parses as a 40-char hex SHA starts a new commit (git
+        // `--format=%H` emits lowercase hex; anything else is a path line).
+        if line.len() == 40 && line.chars().all(|c| c.is_ascii_hexdigit()) {
+            active = Some(line.to_string());
+            out.entry(line.to_string()).or_default();
+        } else if let Some(sha) = active.as_ref() {
+            out.entry(sha.clone()).or_default().push(line.to_string());
+        }
+    }
+    out
+}
+
 pub fn sync_worktrees(store: &Store, repo_root: &Path) -> Result<(), crate::store::StoreError> {
     let wts = discover_worktrees(repo_root);
     let base_ref = detect_base_ref(repo_root);
