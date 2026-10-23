@@ -1,3 +1,4 @@
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 //! `ra` — repo-assist binary entry point.
 //!
 //! Phase 0.1 wires up the CLI surface: argument parsing, `--version`/`--help`, and a
