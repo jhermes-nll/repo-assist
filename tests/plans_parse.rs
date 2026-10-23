@@ -268,6 +268,37 @@ fn indented_checkbox_does_not_become_a_separate_task() {
     assert_eq!(plan.tasks[0].declared, "open");
 }
 
+/// A single unknown marker (e.g. `- [~]`) is a checkbox the author never ticked: it counts
+/// as unchecked (and a fully-ticked task plus such a marker still reads `done`).
+#[test]
+fn unknown_single_char_marker_counts_as_unchecked() {
+    let text = "### Task 1: marker\n- [x] real work\n- [~] wavy one\n";
+    let plan = parse_plan(text);
+
+    assert_eq!(plan.tasks.len(), 1);
+    // 2 boxes total, 1 checked -> open (the ~ box counts, but is unchecked).
+    assert_eq!(plan.tasks[0].declared, "open");
+
+    let all_ticked = "### Task 2: all ticked\n- [x] a\n- [~] b\n";
+    // ~ counts as a box, so 1 of 2 checked -> open.
+    assert_eq!(parse_plan(all_ticked).tasks[0].declared, "open");
+
+    let no_boxes = "### Task 3: all unchecked\n- [~] wavy\n- [ ] plain\n";
+    // 0 checked of 2 -> open, but both lines are recognized as boxes.
+    assert_eq!(parse_plan(no_boxes).declared_state(), "open");
+}
+
+/// A fully-indented list parses to zero tasks and falls through to the unknown-format
+/// warning (checklist only takes column-0 bullets); this is the intended under-count.
+#[test]
+fn fully_indented_list_is_not_a_plan() {
+    let text = "# TODO\n  - [ ] one\n  - [x] two\n";
+    let plan = parse_plan(text);
+
+    assert_eq!(plan.task_count(), 0);
+    assert!(!plan.warnings.is_empty());
+}
+
 /// `expected_paths` cleaning: strip `:line`/`:line-line` ranges and trailing `(…)` notes.
 #[test]
 fn path_declaration_strips_line_ranges_and_notes() {

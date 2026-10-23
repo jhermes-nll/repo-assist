@@ -1,9 +1,12 @@
 //! Generic checklist parser (Phase 3.1).
 //!
-//! Treats a file as a single plan whose tasks are **every** top-level checkbox (`- [ ]`/
-//! `- [x]`), one task per item, with empty `expected_paths`. Used for generic checklist
-//! files (`TODO.md`, `PLAN.md`, `docs/plans/**/*.md`); checks that require `expected_paths`
-//! simply skip these tasks.
+//! Treats a file as a single plan whose tasks are **every top-level (column-0) checkbox**
+//! (`- [ ]`/`- [x]`), one task per item, with empty `expected_paths`. Indented checkboxes
+//! are nested under the task above and deliberately produce no tasks of their own; their
+//! checked state is ignored, so a checked parent with unchecked children still reads
+//! `done` (asymmetric with the superpowers parser, which counts nested boxes toward the
+//! parent). Used for generic checklist files (`TODO.md`, `PLAN.md`,
+//! `docs/plans/**/*.md`); checks that require `expected_paths` simply skip these tasks.
 
 use crate::plans::{parse_checkbox, strip_heading, task_id, ParsedPlan, Task};
 

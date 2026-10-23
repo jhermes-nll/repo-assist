@@ -21,11 +21,19 @@ pub mod superpowers;
 /// A single parsed task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
-    /// Plan-scoped, stable task id of the form `{plan_id}:{ordinal}`.
+    /// Plan-scoped task id of the form `{plan_id}:{ordinal}`.
     ///
     /// Parsers leave `plan_id` empty, so the provisional id ends up `:{ordinal}`; the plan
-    /// importer assigns the real plan id via [`Task::set_plan_id`], which rewrites this field.
-    /// This keeps `tasks.id` (a global primary key) unique across plans.
+    /// importer assigns the real plan id via [`Task::set_plan_id`], which rewrites this
+    /// field. Scoping by the plan keeps `tasks.id` (a global primary key) unique across
+    /// plans; using the ordinal (not the source heading number) keeps ids collision-free
+    /// when a plan repeats or renumbers its task headings.
+    ///
+    /// Stability: re-importing the same document re-derives the same ids. Inserting or
+    /// deleting a task *before* an existing one shifts its ordinal — and therefore its id —
+    /// so the importer must expect an id re-derivation on structure changes (the old id's
+    /// `observed`/`observed_reason` state is intentionally preserved on upsert, i.e. it
+    /// follows the row, not the id).
     pub id: String,
     /// The plan this task belongs to (populated by the plan importer, not the parser).
     pub plan_id: String,
@@ -162,10 +170,11 @@ pub(crate) fn strip_heading(line: &str, level: usize) -> Option<String> {
 
 /// Parse a `- [ ]` / `- [x]` checkbox line, returning whether it is checked (false for `- [ ]`).
 ///
-/// Only a genuine checkbox marker counts: the bracket content must be a single `x`/`X`/space
-/// (or empty) and must be followed by whitespace or end-of-line. That keeps markdown link
-/// bullets such as `- [spec](http://x)` from being misread as unchecked checkboxes. The label
-/// after the closing `]` is ignored here; callers extract it separately.
+/// A genuine checkbox marker is a single char (`x`/`X`/space) or empty; multi-char content is a
+/// markdown link (`- [spec](http://x)`) and yields `None` so link bullets are not misread as
+/// unchecked boxes. A single *unknown* marker (e.g. `- [~]`) is a checkbox the author never
+/// ticked: it counts as unchecked. The char after `]` must be whitespace or end-of-line; the
+/// label after `]` is ignored here (callers extract it separately).
 pub(crate) fn parse_checkbox(line: &str) -> Option<bool> {
     let s = line
         .trim_start()
@@ -174,13 +183,16 @@ pub(crate) fn parse_checkbox(line: &str) -> Option<bool> {
         .strip_prefix('[')?;
     let close = s.find(']')?;
     let marker = &s[..close];
-    if !(marker.is_empty() || matches!(marker, "x" | "X" | " ")) {
-        return None;
+    if marker.chars().count() > 1 {
+        return None; // multi-char: markdown link, not a checkbox
     }
-    if let Some(next) = s[close + 1..].chars().next() {
-        if !next.is_whitespace() {
-            return None;
+    if let Some(next) = s.get(close + 1..) {
+        if let Some(ch) = next.chars().next() {
+            if !ch.is_whitespace() {
+                return None;
+            }
         }
     }
-    Some(marker == "x" || marker == "X")
+    // Empty / unknown single-char markers are unchecked; only x/X is checked.
+    Some(matches!(marker, "x" | "X"))
 }

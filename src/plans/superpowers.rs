@@ -46,6 +46,8 @@ pub fn parse(text: &str) -> ParsedPlan {
         }
 
         // A task heading (`# {2,4} Task \d+`)? Start a new task (flush the previous one).
+        // The ordinal is positional: authors may renumber or repeat task numbers, and the
+        // positional id stays collision-free within the plan (see `Task::id`).
         if let Some((_num, title)) = parse_task_heading(trimmed) {
             if have_task {
                 tasks.push(task_from(
