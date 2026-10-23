@@ -198,15 +198,13 @@ mod tests {
             want: Observed::InProgress,
         };
 
-        // in_progress: none committed, but one appears in a branch commit.
+        // in_progress: not all expected paths are in branch commits, but at least one is.
+        // a.rs appears in a branch commit; b.rs is neither committed nor touched.
         let in_progress_from_branch = DeriveCase {
             name: "none committed, but one in a branch commit",
             expected: paths(&["a.rs", "b.rs"]),
             changed: vec![("x.rs".into(), "untracked".into())],
-            history: vec![
-                ("c2".into(), paths(&["a.rs"])),
-                ("c1".into(), paths(&["b.rs"])),
-            ],
+            history: vec![("c2".into(), paths(&["a.rs"]))],
             want: Observed::InProgress,
         };
 
