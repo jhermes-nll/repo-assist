@@ -10,6 +10,7 @@ pub mod daemon;
 pub mod doctor;
 pub mod ipc;
 pub mod paths;
+pub mod plans;
 pub mod sources;
 pub mod store;
 pub mod tui;
