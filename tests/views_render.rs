@@ -217,3 +217,39 @@ fn git_status_porcelain(dir: &std::path::Path) -> String {
         .unwrap();
     String::from_utf8_lossy(&out.stdout).to_string()
 }
+
+/// Item 4 (20261022-20): the three markdown views are snapshot-tested with `insta`
+/// instead of hand-rolled comparisons. Render with a fixed timestamp so the output is
+/// deterministic; `assert_snapshot!(value)` names each snapshot after the test function
+/// (a clean identifier), and insta commits the rendered output as a companion `.snap`
+/// file that every subsequent run compares against, failing on any drift.
+#[test]
+fn views_are_snapshot_tested_with_insta() {
+    use insta::assert_snapshot;
+
+    let d = sample_data();
+    let now = 1_700_000_000_000i64;
+
+    // Full data: one snapshot per view.
+    assert_snapshot!(render_status(&d, now));
+    assert_snapshot!(render_plans(&d, now));
+    assert_snapshot!(render_findings(&d, now));
+}
+
+/// Empty-data snapshot: every view renders its header + "(none)" bodies without panicking.
+#[test]
+fn views_snapshot_empty_data() {
+    use insta::assert_snapshot;
+
+    let empty = ViewData {
+        status: json!({}),
+        plans: json!({}),
+        findings: json!({"findings": []}),
+        sessions: json!({}),
+    };
+    let now = 1_700_000_000_000i64;
+
+    assert_snapshot!(render_status(&empty, now));
+    assert_snapshot!(render_plans(&empty, now));
+    assert_snapshot!(render_findings(&empty, now));
+}

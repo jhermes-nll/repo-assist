@@ -1,0 +1,17 @@
+---
+source: tests/views_render.rs
+expression: "render_findings(&d, now)"
+---
+generated_at: 2023-11-14T22:13:20Z
+daemon: 0.1.0
+This file is auto-generated and read-only; it may be stale.
+# Findings
+
+## Open
+- [high] k.open: s1 — sum1
+
+## Acknowledged
+(none)
+
+## Resolved
+- [low] k.resolved: s2

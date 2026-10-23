@@ -1,0 +1,10 @@
+---
+source: tests/views_render.rs
+expression: "render_plans(&d, now)"
+---
+generated_at: 2023-11-14T22:13:20Z
+daemon: 0.1.0
+This file is auto-generated and read-only; it may be stale.
+# Plans
+
+p1  active  Plan  (0/1)
