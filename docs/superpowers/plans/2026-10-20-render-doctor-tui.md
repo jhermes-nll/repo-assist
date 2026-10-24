@@ -3,7 +3,7 @@
 **Date:** 2026-10-20
 **Repo:** `/Users/jesse/Developer/repos/repo-assist` · base HEAD `8546abe`
 **Spec:** `docs/2026-10-19-repo-assist-implementation-plan.md` §3, §4, §6, §7, §9, §11, §15 (Task 2.5, Task 5.1), §16
-**Authority on what exists:** `status.md` (rewritten and committed today, accurate at `8546abe`)
+**Authority on what exists:** `docs/status.md` (rewritten and committed today, accurate at `8546abe`)
 
 ## Starting state (verified)
 
