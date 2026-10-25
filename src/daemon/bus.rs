@@ -69,6 +69,45 @@ fn bus_loop(rx: mpsc::Receiver<WorktreeEvent>, store: Arc<Store>, repo_root: Arc
             Ok(WorktreeEvent::Dirty { path }) => {
                 // Re-run the git source to refresh that worktree's changed-file set (Section 5).
                 let _ = git::sync_worktrees(&store, repo_root.as_ref());
+                // Plan discovery: if the changed paths match any plan glob, re-sync plans.
+                let maybe_id = store.read(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT id FROM worktrees WHERE path = ?1",
+                        [path.display().to_string()],
+                        |r| r.get::<_, i64>(0),
+                    ).ok())
+                }).ok().flatten();
+                if let Some(wt_id) = maybe_id {
+                    let changed = {
+                        let branch_base = store
+                            .read(|conn| {
+                                let mut stmt = conn
+                                    .prepare("SELECT branch, base_ref FROM worktrees WHERE id = ?1")?;
+                                let mut rows = stmt.query_map([wt_id], |r| {
+                                    Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+                                })?;
+                                if let Some(r) = rows.next() {
+                                    Ok(r?)
+                                } else {
+                                    Ok((None, None))
+                                }
+                            })
+                            .unwrap_or((None, None));
+                        git::changed_file_set(&path, branch_base.0.as_deref(), branch_base.1.as_deref())
+                    };
+                    let globs = crate::plans::plan_globs();
+                    let touches_plan_glob = changed.iter().any(|(p, _)| {
+                        globs.iter().any(|g| crate::plans::discover::glob_match(g, p))
+                    });
+                    if touches_plan_glob {
+                        let _ = crate::plans::discover::sync_plans(
+                            &store,
+                            wt_id,
+                            &path,
+                            crate::plans::discover::default_adapters(),
+                        );
+                    }
+                }
                 // Record the worktree_dirty event in the events table.
                 let _ = store.append_event(
                     git::now_ms(),

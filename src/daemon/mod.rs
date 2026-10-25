@@ -103,6 +103,33 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
 
+    // Plans discovery ticker (Section 3.2): slow 60s backstop that scans every known
+    // plan worktree and re-imports plans/tasks (plus observed derivation). Drop-guarded.
+    let _plans_ticker = {
+        let store = store.clone();
+        let stop_rx_plans = stop_rx.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(60));
+                if stop_rx_plans.borrow().is_some() {
+                    break;
+                }
+                if let Ok(wts) = store.plan_worktrees() {
+                    for pw in wts {
+                        if let (Some(id), Some(path)) = (pw.worktree_id, pw.path.as_deref()) {
+                            let _ = crate::plans::discover::sync_plans(
+                                &store,
+                                id,
+                                Path::new(path),
+                                crate::plans::discover::default_adapters(),
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    };
+
     // Debounced auto-render (M1 / §11): background thread, never blocks IPC/tick loop.
     let _render_thread = if state.config.views.enabled {
         let cfg = state.config.clone();
