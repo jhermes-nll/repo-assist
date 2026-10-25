@@ -1,4 +1,4 @@
--- repo-assist store schema (PRAGMA user_version = 2). See plan section 5.
+-- repo-assist store schema (PRAGMA user_version = 3). See plan section 5.
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 

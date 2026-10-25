@@ -5,7 +5,7 @@
 //! current version, and treat any unknown non-zero value as fatal.
 
 /// Highest schema version this crate can open.
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 /// Read the `user_version` from a file. Returns 0 for a missing or empty database.
 pub fn current_user_version(db_path: &std::path::Path) -> Result<u32, crate::store::StoreError> {

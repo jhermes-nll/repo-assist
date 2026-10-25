@@ -112,3 +112,83 @@ fn newer_schema_version_is_refused() {
         other => panic!("expected NewerVersion, got {other:?}"),
     }
 }
+
+#[test]
+fn events_table_retains_only_newest_cap_rows() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = dir.path().join("db.sqlite");
+    let store = repo_assist::store::Store::open(&db).unwrap();
+    let cap = repo_assist::store::EVENT_CAP as i64;
+    let total = cap + 50;
+    for i in 0..total {
+        store.append_event(i, "src", "kind", None, "{}").unwrap();
+    }
+    let count: i64 = store
+        .read(|conn| conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(count, cap, "events retained should be capped");
+    let max_ts: i64 = store
+        .read(|conn| conn.query_row("SELECT MAX(ts_ms) FROM events", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(max_ts, total - 1, "newest events should survive the cap");
+    let min_ts: i64 = store
+        .read(|conn| conn.query_row("SELECT MIN(ts_ms) FROM events", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(min_ts, 50, "oldest events should be dropped");
+}
+
+#[test]
+fn tool_calls_ring_retains_newest_per_session() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db = dir.path().join("db.sqlite");
+    let store = repo_assist::store::Store::open(&db).unwrap();
+    let ring = repo_assist::store::TOOL_CALL_RING_SIZE;
+    let total = ring + 25;
+    let calls: Vec<repo_assist::store::ToolCallRow<'_>> = (0..total)
+        .map(|i| repo_assist::store::ToolCallRow {
+            ts_ms: i as i64,
+            tool: "read",
+            args_hash: "a1b2c3d4e5f60718",
+            is_error: None,
+            result_hash: None,
+        })
+        .collect();
+    let row = repo_assist::store::SessionRow {
+        id: "s1",
+        agent: "pi",
+        file: "/tmp/s1.jsonl",
+        cwd: None,
+        worktree_id: None,
+        started_ms: None,
+        last_event_ms: None,
+        tokens_in: 0,
+        tokens_out: 0,
+        tokens_cache: 0,
+        cost_usd: None,
+        tool_calls: total as i64,
+        byte_offset: 0,
+        parse_errors: 0,
+    };
+    store.upsert_session_with_calls(&row, &calls).unwrap();
+
+    let count: i64 = store
+        .read(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM tool_calls WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap();
+    assert_eq!(count, ring as i64, "tool_calls ring should be capped");
+    let min_ts: i64 = store
+        .read(|conn| {
+            conn.query_row(
+                "SELECT MIN(ts_ms) FROM tool_calls WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap();
+    assert_eq!(min_ts, 25, "oldest tool calls should be dropped");
+}
