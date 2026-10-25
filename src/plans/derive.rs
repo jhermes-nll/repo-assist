@@ -16,6 +16,129 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+pub use crate::sources::git::CommitTouch;
+
+/// Input to the pure observed derivation (Section 9).
+#[derive(Debug, Clone)]
+pub struct DeriveInput {
+    pub expected_paths: Vec<String>,
+    pub changed_paths: Vec<String>,
+    pub branch_commits: Vec<CommitTouch>,
+    pub plan_first_commit_sha: Option<String>,
+}
+
+/// One piece of derived evidence (`confidence` is always `inferred`, kind `commit`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceSeed {
+    pub kind: &'static str,
+    pub reference: String,
+    pub confidence: &'static str,
+}
+
+/// Output of observed derivation.
+#[derive(Debug, Clone)]
+pub struct ObservedOutcome {
+    pub state: &'static str,
+    pub evidence: Vec<EvidenceSeed>,
+}
+
+/// Pure derivation matching the Section 9 truth table (new API).
+pub fn derive_observed(input: &DeriveInput) -> ObservedOutcome {
+    if input.expected_paths.is_empty() {
+        return ObservedOutcome { state: "unknown", evidence: Vec::new() };
+    }
+
+    // Reachable commits: those made after `plan_first_commit_sha`, when known.
+    let ts_descending = if input.branch_commits.len() >= 2 {
+        input.branch_commits[0].ts_ms >= input.branch_commits[input.branch_commits.len() - 1].ts_ms
+    } else {
+        true
+    };
+    let plan_sha = input.plan_first_commit_sha.as_deref();
+    let plan_pos = plan_sha.and_then(|ps| input.branch_commits.iter().position(|c| c.sha == ps));
+
+    let reachable: Vec<&CommitTouch> = input
+        .branch_commits
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| {
+            if let Some(ps) = plan_sha {
+                if c.sha == ps {
+                    return false;
+                }
+                if let Some(pos) = plan_pos {
+                    return if ts_descending { *i < pos } else { *i > pos };
+                }
+            }
+            true
+        })
+        .map(|(_, c)| c)
+        .collect();
+
+    // First reachable commit (in input order) containing a given path.
+    let first_commit_for = |path: &str| -> Option<&CommitTouch> {
+        reachable
+            .iter()
+            .copied()
+            .find(|c| c.files.iter().any(|f| f == path))
+    };
+
+    let committed = input.expected_paths.iter().all(|p| first_commit_for(p).is_some());
+
+    if committed {
+        let mut shas: BTreeSet<String> = BTreeSet::new();
+        for p in &input.expected_paths {
+            if let Some(c) = first_commit_for(p) {
+                shas.insert(c.sha.clone());
+            }
+        }
+        let evidence: Vec<EvidenceSeed> = shas
+            .into_iter()
+            .map(|sha| EvidenceSeed {
+                kind: "commit",
+                reference: sha,
+                confidence: "inferred",
+            })
+            .collect();
+        return ObservedOutcome {
+            state: "committed",
+            evidence,
+        };
+    }
+
+    let changed: std::collections::BTreeSet<&str> = input.changed_paths.iter().map(String::as_str).collect();
+    let touched_some = input.expected_paths.iter().any(|p| {
+        changed.contains(p.as_str())
+            || input.branch_commits.iter().any(|c| c.files.iter().any(|f| f == p))
+    });
+    if touched_some {
+        let mut shas: BTreeSet<String> = BTreeSet::new();
+        for p in &input.expected_paths {
+            // only commits touching this path and reachable
+            if let Some(c) = first_commit_for(p) {
+                shas.insert(c.sha.clone());
+            }
+        }
+        let evidence: Vec<EvidenceSeed> = shas
+            .into_iter()
+            .map(|sha| EvidenceSeed {
+                kind: "commit",
+                reference: sha,
+                confidence: "inferred",
+            })
+            .collect();
+        return ObservedOutcome {
+            state: "in_progress",
+            evidence,
+        };
+    }
+
+    ObservedOutcome {
+        state: "not_started",
+        evidence: Vec::new(),
+    }
+}
+
 use sha2::{Digest, Sha256};
 
 /// The four observed states (Section 9), kept in one place so the store, the checks, and the

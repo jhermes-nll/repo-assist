@@ -386,3 +386,75 @@ pub fn changed_file_set(
     }
     out
 }
+
+/// One commit on a branch (Section 9): sha, unix-millis timestamp, and the files it touched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitTouch {
+    pub sha: String,
+    pub ts_ms: i64,
+    pub files: Vec<String>,
+}
+
+/// The oldest commit that touched `rel_path` in the repo at `repo_root` (Section 9).
+///
+/// Returns `git log --reverse --format=%H -- <rel_path>`'s first line (the oldest commit
+/// SHA), or `None` when git reports nothing. Path is relative to the repo root.
+pub fn first_commit_for_path(repo_root: &Path, rel_path: &str) -> Option<String> {
+    let out = git_ro(
+        repo_root,
+        &["log", "--reverse", "--format=%H", "--", rel_path],
+    )?;
+    out.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+/// Commits on `head_ref` not reachable from `base_ref` (Section 9): `base..head`, newest
+/// first, each carrying its TOUCHED FILES.
+///
+/// Format: `git log <base>..<head> --name-only --format=__COMMIT__%H%x00%ct`; a line
+/// beginning with `__COMMIT__` starts a new commit; subsequent non-empty lines are paths.
+/// Returns an empty vector on git failure or an empty range.
+pub fn commits_between(repo_root: &Path, base_ref: &str, head_ref: &str) -> Vec<CommitTouch> {
+    let arg = format!("{base_ref}..{head_ref}");
+    let Some(data) = git_ro(
+        repo_root,
+        &["log", &arg, "--name-only", "--format=__COMMIT__%H%x00%ct"],
+    ) else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<CommitTouch> = Vec::new();
+    let mut current: Option<CommitTouch> = None;
+    for line in data.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("__COMMIT__") {
+            if let Some(c) = current.take() {
+                out.push(c);
+            }
+            // rest = "<sha>\x00<ct>"
+            let mut parts = rest.split('\u{0}');
+            let sha = parts.next().unwrap_or("").trim().to_string();
+            let ts: i64 = parts
+                .next()
+                .and_then(|s| s.trim().parse::<i64>().ok())
+                .unwrap_or(0)
+                * 1000;
+            current = Some(CommitTouch {
+                sha,
+                ts_ms: ts,
+                files: Vec::new(),
+            });
+        } else if let Some(c) = current.as_mut() {
+            let p = line.trim();
+            if !p.is_empty() {
+                c.files.push(p.to_string());
+            }
+        }
+    }
+    if let Some(c) = current.take() {
+        out.push(c);
+    }
+    out
+}
