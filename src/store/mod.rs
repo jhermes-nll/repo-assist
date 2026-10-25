@@ -348,6 +348,38 @@ impl Store {
             Ok(conn.last_insert_rowid())
         })
     }
+
+    /// Set a task's `observed` (and `observed_reason`) value. Single-writer transaction.
+    ///
+    /// Owns the `tasks.observed` / `tasks.observed_reason` columns — callers that recompute
+    /// drift should use this rather than poking at the row directly.
+    pub fn set_task_observed(
+        &self,
+        task_id: &str,
+        observed: &str,
+        reason: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "UPDATE tasks SET observed = ?2, observed_reason = ?3 WHERE id = ?1",
+                rusqlite::params![task_id, observed, reason],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Remove evidence rows for `task_id` of the given `kind`, keeping all other kinds.
+    /// Single-writer transaction. Used before re-appending derived commit evidence so re-sync
+    /// does not accumulate duplicates.
+    pub fn clear_evidence(&self, task_id: &str, kind: &str) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "DELETE FROM evidence WHERE task_id = ?1 AND kind = ?2",
+                rusqlite::params![task_id, kind],
+            )?;
+            Ok(())
+        })
+    }
     /// Upsert one `sessions` row and REPLACE its `tool_calls` rows.
     ///
     /// All statements run inside a single `unchecked_transaction` on the writer
