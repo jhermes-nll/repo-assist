@@ -57,6 +57,9 @@ pub struct Store {
     writer: Arc<Mutex<rusqlite::Connection>>,
     version: u32,
     existed: bool,
+    /// Notifier woken whenever a new row is appended to the `events` table, so long-poll
+    /// subscribers (`Method::Subscribe`) can return promptly without polling.
+    pub event_notify: Arc<tokio::sync::Notify>,
 }
 
 /// A synchronous write transaction against a [`Store`].
@@ -130,6 +133,22 @@ pub struct ToolCallRow<'a> {
     pub result_hash: Option<&'a str>,
 }
 
+/// One row of the `events` table (Task: Subscribe RPC).
+#[derive(Debug, Clone)]
+pub struct Event {
+    pub id: i64,
+    pub ts_ms: i64,
+    pub source: String,
+    pub kind: String,
+    pub subject: Option<String>,
+    pub payload: String,
+}
+
+/// Alias retained for callers that name the row type `EventRow`.
+pub type EventRow = Event;
+/// Alias retained for callers that name the row type `EventRecord`.
+pub type EventRecord = Event;
+
 impl Store {
     /// Open (or create and migrate) the database at `path`.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
@@ -160,6 +179,7 @@ impl Store {
                 version,
                 existed: false,
                 writer: Arc::new(Mutex::new(conn)),
+                event_notify: Arc::new(tokio::sync::Notify::new()),
             });
         }
         match migrations::migrate(&path)? {
@@ -177,6 +197,7 @@ impl Store {
             writer: Arc::new(Mutex::new(conn)),
             version,
             existed: true,
+            event_notify: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -249,12 +270,43 @@ impl Store {
         subject: Option<&str>,
         payload: &str,
     ) -> Result<i64, StoreError> {
-        self.write(|conn| {
+        let id = self.write(|conn| {
             conn.execute(
                 "INSERT INTO events(ts_ms, source, kind, subject, payload)                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![ts_ms, source, kind, subject, payload],
             )?;
             Ok(conn.last_insert_rowid())
+        })?;
+        // Wake long-poll `Subscribe` callers so they don't have to poll.
+        self.event_notify.notify_waiters();
+        Ok(id)
+    }
+
+    /// Rows from the `events` table with `id > after_id`, oldest first, up to `limit`.
+    ///
+    /// Used by the `Subscribe` RPC long-poll. `after_id` of 0 (or any value below the
+    /// first id) returns everything available.
+    pub fn list_events_since(&self, after_id: i64, limit: i64) -> Result<Vec<Event>, StoreError> {
+        let limit = limit.clamp(1, 100_000);
+        self.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, ts_ms, source, kind, subject, payload FROM events                 WHERE id > ?1 ORDER BY id ASC LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![after_id, limit], |row| {
+                Ok(Event {
+                    id: row.get(0)?,
+                    ts_ms: row.get(1)?,
+                    source: row.get(2)?,
+                    kind: row.get(3)?,
+                    subject: row.get(4)?,
+                    payload: row.get(5)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
         })
     }
 
