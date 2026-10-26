@@ -138,6 +138,55 @@ async fn handle_connection(
     Ok(())
 }
 
+
+/// Long-poll `Subscribe` implementation: returns events newer than `since`,
+/// waiting up to `wait_ms` for new appends to land.
+async fn subscribe_json(
+    store: &Store,
+    since: Option<i64>,
+    wait_ms: u64,
+) -> Result<Value, crate::store::StoreError> {
+    let after = since.unwrap_or(0);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+    loop {
+        let notified = store.event_notify.notified();
+        let events = tokio::task::block_in_place(|| store.list_events_since(after, 1000))?;
+        if !events.is_empty() {
+            let next = events.last().map(|e| e.id).unwrap_or(after);
+            let events_json: Vec<Value> = events
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "id": e.id,
+                        "ts_ms": e.ts_ms,
+                        "source": e.source,
+                        "kind": e.kind,
+                        "subject": e.subject,
+                        "payload": e.payload,
+                    })
+                })
+                .collect();
+            return Ok(json!({
+                "events": events_json,
+                "next": next,
+                "timed_out": false,
+            }));
+        }
+        if wait_ms == 0 || tokio::time::Instant::now() >= deadline {
+            return Ok(json!({
+                "events": [],
+                "next": after,
+                "timed_out": wait_ms > 0,
+            }));
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        tokio::select! {
+            _ = notified => {}
+            _ = tokio::time::sleep(remaining) => {}
+        }
+    }
+}
+
 /// Dispatch a single request, writing either a `result` or an `error` reply (Section 6).
 ///
 /// Returns `true` when the daemon should stop servicing the connection (Section 6), `false`
@@ -209,6 +258,21 @@ async fn dispatch_request(
             let result = tokio::task::block_in_place(|| sessions_json(store))
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
+        Method::Subscribe => {
+            let since = req.params.get("since").and_then(Value::as_i64);
+            let wait_ms = req.params
+                .get("wait_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            match subscribe_json(store, since, wait_ms).await {
+                Ok(result) => write_reply(stream, &json!({ "id": req.id, "result": result })).await?,
+                Err(e) => write_reply(
+                    stream,
+                    &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } }),
+                )
+                .await?,
+            }
         }
         Method::Plan => {
             match req.params.get("id").and_then(Value::as_str) {
