@@ -277,7 +277,11 @@ impl DataSource {
     }
 
     /// Alias covering the most likely spelling used by callers.
-    pub fn subscribe(&mut self, since: Option<i64>, wait_ms: u64) -> Result<SubscribeResult, TuiError> {
+    pub fn subscribe(
+        &mut self,
+        since: Option<i64>,
+        wait_ms: u64,
+    ) -> Result<SubscribeResult, TuiError> {
         self.subscribe_with(since, wait_ms)
     }
 
@@ -310,8 +314,14 @@ impl DataSource {
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
-                let next = result.get("next").and_then(|v| v.as_i64()).unwrap_or_else(|| effective_since.unwrap_or(0));
-                let timed_out = result.get("timed_out").and_then(|v| v.as_bool()).unwrap_or(false);
+                let next = result
+                    .get("next")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or_else(|| effective_since.unwrap_or(0));
+                let timed_out = result
+                    .get("timed_out")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 self.since = Some(next);
                 self.backoff_ms = 100;
                 Ok(SubscribeResult {

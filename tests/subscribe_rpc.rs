@@ -6,7 +6,11 @@ use repo_assist::store::Store;
 use std::time::Duration;
 use tempfile::TempDir;
 
-fn spawn_daemon(repo_root: &std::path::Path, state: &std::path::Path, runtime: &std::path::Path) -> std::process::Child {
+fn spawn_daemon(
+    repo_root: &std::path::Path,
+    state: &std::path::Path,
+    runtime: &std::path::Path,
+) -> std::process::Child {
     std::process::Command::new(std::env::var("CARGO_BIN_EXE_ra").unwrap())
         .env("HOME", state)
         .env("XDG_STATE_HOME", state)
@@ -29,12 +33,12 @@ fn wait_socket(sock: &std::path::Path) {
 }
 
 fn setup() -> (
-    tempfile::TempDir, // state
-    tempfile::TempDir, // runtime
+    tempfile::TempDir,        // state
+    tempfile::TempDir,        // runtime
     &'static std::path::Path, // repo root (leaked)
-    std::path::PathBuf, // db
-    String, // key
-    std::path::PathBuf, // sock
+    std::path::PathBuf,       // db
+    String,                   // key
+    std::path::PathBuf,       // sock
 ) {
     let r = Box::leak(Box::new(common::GitRepo::new()));
     let state = TempDir::new().unwrap();
@@ -61,8 +65,12 @@ fn store_list_events_since() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("store.db");
     let store = Store::open(&db).unwrap();
-    let id1 = store.append_event(10, "worktree", "worktree_dirty", Some("/wt"), "{}").unwrap();
-    let id2 = store.append_event(20, "finding", "finding_opened", Some("f1"), "{\"a\":1}").unwrap();
+    let id1 = store
+        .append_event(10, "worktree", "worktree_dirty", Some("/wt"), "{}")
+        .unwrap();
+    let id2 = store
+        .append_event(20, "finding", "finding_opened", Some("f1"), "{\"a\":1}")
+        .unwrap();
     let got = store.list_events_since(0, 10).unwrap();
     assert_eq!(got.len(), 2);
     assert_eq!(got[0].id, id1);
@@ -78,14 +86,21 @@ fn subscribe_rpc_shape_and_cursor() {
     // Seed an event directly before daemon starts (daemon reads same db).
     {
         let store = Store::open(&db).unwrap();
-        store.append_event(42, "test", "ping", Some("s"), "{\"x\":1}").unwrap();
+        store
+            .append_event(42, "test", "ping", Some("s"), "{\"x\":1}")
+            .unwrap();
     }
 
     let child = spawn_daemon(repo_root, state.path(), _runtime.path());
     wait_socket(&sock);
 
     let mut client = Client::connect(&sock).unwrap();
-    let reply = client.call(Method::Subscribe, serde_json::json!({"since": 0, "wait_ms": 0})).unwrap();
+    let reply = client
+        .call(
+            Method::Subscribe,
+            serde_json::json!({"since": 0, "wait_ms": 0}),
+        )
+        .unwrap();
     match reply {
         repo_assist::ipc::Reply::Result { result, .. } => {
             let events = result.get("events").unwrap().as_array().unwrap();
@@ -118,12 +133,24 @@ fn subscribe_rpc_long_poll_times_out() {
     let mut client = Client::connect(&sock).unwrap();
     // Use a small wait; with no events newer than max id we might still get initial; seed none newer.
     // Ask since = i64::MAX-ish? use current max by first call.
-    let first = client.call(Method::Subscribe, serde_json::json!({"since": 0, "wait_ms": 0})).unwrap();
+    let first = client
+        .call(
+            Method::Subscribe,
+            serde_json::json!({"since": 0, "wait_ms": 0}),
+        )
+        .unwrap();
     let next = match first {
-        repo_assist::ipc::Reply::Result { result, .. } => result.get("next").unwrap().as_i64().unwrap(),
+        repo_assist::ipc::Reply::Result { result, .. } => {
+            result.get("next").unwrap().as_i64().unwrap()
+        }
         _ => 0,
     };
-    let reply = client.call(Method::Subscribe, serde_json::json!({"since": next, "wait_ms": 100})).unwrap();
+    let reply = client
+        .call(
+            Method::Subscribe,
+            serde_json::json!({"since": next, "wait_ms": 100}),
+        )
+        .unwrap();
     match reply {
         repo_assist::ipc::Reply::Result { result, .. } => {
             let events = result.get("events").unwrap().as_array().unwrap();
@@ -147,7 +174,10 @@ fn subscribe_rpc_reconnect_kill_restart() {
     // compute socket as in setup by re-running? already _sock dropped; use a fresh setup-like path:
     // We'll just spawn and use the real socket by discovering via runtime path + key.
     let key2 = key.clone();
-    let sock = runtime.path().join("repo-assist").join(format!("{key2}.sock"));
+    let sock = runtime
+        .path()
+        .join("repo-assist")
+        .join(format!("{key2}.sock"));
 
     let mut g1 = spawn_daemon(repo_root, state.path(), runtime.path());
     wait_socket(&sock);
@@ -178,7 +208,10 @@ fn subscribe_rpc_reconnect_kill_restart() {
 fn no_duplicate_rows_after_reconnect() {
     // Reuse the existing tui reconnect assertion style: replace-whole-snapshot on fetch_all.
     let (state, runtime, repo_root, _db, key, _sock) = setup();
-    let sock = runtime.path().join("repo-assist").join(format!("{key}.sock"));
+    let sock = runtime
+        .path()
+        .join("repo-assist")
+        .join(format!("{key}.sock"));
     let mut g1 = spawn_daemon(repo_root, state.path(), runtime.path());
     wait_socket(&sock);
 
@@ -198,7 +231,12 @@ fn no_duplicate_rows_after_reconnect() {
     let s2 = ds.fetch_all().expect("fetch2");
     let rows_after = s2.rows[0].len();
     // Should not double the rows (snapshot replaced, not appended).
-    assert!(rows_after <= rows_before.max(1) * 2 + 5, "unexpected row growth: {} -> {}", rows_before, rows_after);
+    assert!(
+        rows_after <= rows_before.max(1) * 2 + 5,
+        "unexpected row growth: {} -> {}",
+        rows_before,
+        rows_after
+    );
 
     let _ = g2.kill();
     let _ = g2.wait();

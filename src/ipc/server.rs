@@ -138,7 +138,6 @@ async fn handle_connection(
     Ok(())
 }
 
-
 /// Long-poll `Subscribe` implementation: returns events newer than `since`,
 /// waiting up to `wait_ms` for new appends to land.
 async fn subscribe_json(

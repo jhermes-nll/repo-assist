@@ -99,6 +99,9 @@ fn run_inner(
         }
 
         if last_tick.elapsed() >= tick_rate {
+            // Best-effort subscribe tick (polling fallback remains below): advances the
+            // internal cursor without panicking on unsupported/failed subscriptions.
+            let _ = ds.subscribe_once();
             match ds.fetch_all() {
                 Ok(snap) => {
                     app.apply_snapshot(&snap);
