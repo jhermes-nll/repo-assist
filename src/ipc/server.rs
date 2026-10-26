@@ -196,7 +196,7 @@ async fn dispatch_request(
             return Ok(true);
         }
         Method::Plans => {
-            let result = tokio::task::block_in_place(|| plans_json(store))
+            let result = tokio::task::block_in_place(|| plans_json(store, config))
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
         }
@@ -310,7 +310,7 @@ pub fn render_views_json(
     let status = status_json(store, repo_key)
         .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
     let plans =
-        plans_json(store).map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
+        plans_json(store, config).map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
     let findings = findings_json(store, &Value::Null)
         .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
     let sessions =
@@ -395,28 +395,74 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
 }
 
 /// Build the `Method::Plans` result: one summary row per plan (Task 2.4).
-fn plans_json(store: &Store) -> Result<Value, crate::store::StoreError> {
+fn plans_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
     store.read(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT p.id, p.source, p.title, p.file, p.worktree_id, p.state, p.first_seen_ms,              p.last_seen_ms, COALESCE(COUNT(t.id), 0) AS task_count,              COALESCE(SUM(CASE WHEN t.declared = 'done' THEN 1 ELSE 0 END), 0) AS declared_done,              COALESCE(SUM(CASE WHEN t.observed = 'done' THEN 1 ELSE 0 END), 0) AS observed_done              FROM plans p LEFT JOIN tasks t ON t.plan_id = p.id              GROUP BY p.id ORDER BY p.last_seen_ms DESC",
+            "SELECT p.id, p.source, p.title, p.file, p.worktree_id, wt.path, p.state, p.first_seen_ms,              p.last_seen_ms, COALESCE(COUNT(t.id), 0) AS task_count,              COALESCE(SUM(CASE WHEN t.declared = 'done' THEN 1 ELSE 0 END), 0) AS declared_done,              COALESCE(SUM(CASE WHEN t.observed = 'done' THEN 1 ELSE 0 END), 0) AS observed_done              FROM plans p LEFT JOIN worktrees wt ON wt.id = p.worktree_id LEFT JOIN tasks t ON t.plan_id = p.id              GROUP BY p.id ORDER BY p.last_seen_ms DESC",
         )?;
+        let now = crate::sources::git::now_ms();
+        let hours = config.thresholds.stalled_hours;
+        let cutoff = now - (hours as i64) * 3_600_000;
         let mut plans: Vec<Value> = Vec::new();
         for r in stmt.query_map([], |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "source": row.get::<_, String>(1)?,
-                "title": row.get::<_, String>(2)?,
-                "file": row.get::<_, Option<String>>(3)?,
-                "worktree_id": row.get::<_, Option<i64>>(4)?,
-                "state": row.get::<_, String>(5)?,
-                "first_seen_ms": row.get::<_, Option<i64>>(6)?,
-                "last_seen_ms": row.get::<_, Option<i64>>(7)?,
-                "task_count": row.get::<_, i64>(8)?,
-                "declared_done": row.get::<_, i64>(9)?,
-                "observed_done": row.get::<_, i64>(10)?,
-            }))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, i64>(11)?,
+            ))
         })? {
-            plans.push(r?);
+            let (id, source, title, file, worktree_id, worktree_path, state, first_seen_ms, last_seen_ms, task_count, declared_done, observed_done) = r?;
+            // Stalled flag mirrors check_plan_stalled.
+            let mut stalled = false;
+            if hours > 0 && state == "active" {
+                let has_open: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM tasks WHERE plan_id = ?1 AND declared = 'open'",
+                        [id.as_str()],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                if has_open > 0 {
+                    let last_activity: Option<i64> = if let Some(wp) = worktree_path.as_deref() {
+                        conn.query_row(
+                            "SELECT MAX(ts_ms) FROM events WHERE source='worktree' AND kind='worktree_dirty' AND subject=?1",
+                            [wp],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                    } else {
+                        None
+                    };
+                    stalled = match last_activity {
+                        Some(t) => t < cutoff,
+                        None => true,
+                    };
+                }
+            }
+            plans.push(json!({
+                "id": id,
+                "source": source,
+                "title": title,
+                "file": file,
+                "worktree_id": worktree_id,
+                "worktree": worktree_path,
+                "state": state,
+                "first_seen_ms": first_seen_ms,
+                "last_seen_ms": last_seen_ms,
+                "task_count": task_count,
+                "declared_done": declared_done,
+                "observed_done": observed_done,
+                "stalled": stalled,
+            }));
         }
         Ok(json!({ "plans": plans }))
     })

@@ -474,6 +474,26 @@ fn print_plan_human(s: &serde_json::Value) {
         "  title:   {}",
         s.get("title").and_then(Value::as_str).unwrap_or("")
     );
+    // Union of all task expected_paths (deduped, sorted).
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(tasks) = s.get("tasks").and_then(|v| v.as_array()) {
+        for t in tasks {
+            if let Some(arr) = t.get("expected_paths").and_then(|v| v.as_array()) {
+                for p in arr {
+                    if let Some(x) = p.as_str() {
+                        paths.push(x.to_string());
+                    }
+                }
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        println!("  expected paths: (no path data)");
+    } else {
+        println!("  expected paths: {}", paths.join(", "));
+    }
     if let Some(tasks) = s.get("tasks").and_then(|v| v.as_array()) {
         for t in tasks {
             println!(

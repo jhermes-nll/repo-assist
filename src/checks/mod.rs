@@ -11,10 +11,15 @@
 
 use std::process::Command;
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::config::Config;
 use crate::store::{CheckWorkspace, FindingCandidate, PlanInfo, TaskInfo, WtInfo, TC};
+
+pub mod plan_checkbox;
+pub mod plan_drift;
+pub mod plan_overlap;
+pub mod plan_stalled;
 
 /// The context every check runs over (Section 9).
 #[derive(Debug, Clone)]
@@ -33,10 +38,10 @@ pub fn run_all_checks(ctx: &CheckCtx) -> Vec<FindingCandidate> {
     out.extend(check_worktree_overlap(ctx));
     out.extend(check_worktree_merge_conflict(ctx));
     out.extend(check_worktree_abandoned(ctx));
-    out.extend(check_plan_overlap(ctx));
-    out.extend(check_plan_drift(ctx));
-    out.extend(check_plan_stalled(ctx));
-    out.extend(check_checkbox_mismatch(ctx));
+    out.extend(plan_overlap::check_plan_overlap(ctx));
+    out.extend(plan_drift::check_plan_drift(ctx));
+    out.extend(plan_stalled::check_plan_stalled(ctx));
+    out.extend(plan_checkbox::check_plan_checkbox(ctx));
     out.extend(check_agent_loop(ctx));
     out.extend(check_agent_tokens(ctx));
     out
@@ -44,7 +49,7 @@ pub fn run_all_checks(ctx: &CheckCtx) -> Vec<FindingCandidate> {
 
 /// Whether one path matches any `ignore_paths` pattern (Section 10 defaults: `*.lock` and
 /// `**/*.snap`). Matching is intentionally lenient (exact, `*.suffix`, or `**/*.suffix`).
-fn matches_ignore(path: &str, patterns: &[String]) -> bool {
+pub(crate) fn matches_ignore(path: &str, patterns: &[String]) -> bool {
     patterns.iter().any(|p| {
         if path == p {
             return true;
@@ -63,7 +68,7 @@ fn matches_ignore(path: &str, patterns: &[String]) -> bool {
 }
 
 /// The changed-file set of one worktree, filtered by `ignore_paths` (Section 10).
-fn changed_filter(wt: &WtInfo, patterns: &[String]) -> Vec<String> {
+pub(crate) fn changed_filter(wt: &WtInfo, patterns: &[String]) -> Vec<String> {
     let mut paths: Vec<String> = wt
         .changed
         .iter()
@@ -77,7 +82,7 @@ fn changed_filter(wt: &WtInfo, patterns: &[String]) -> Vec<String> {
 
 /// The changed paths a plan expects (union of its tasks' `expected_paths`), filtered by
 /// `ignore_paths`.
-fn expected_filtered(plan: &PlanInfo, tasks: &[TaskInfo], patterns: &[String]) -> Vec<String> {
+pub(crate) fn expected_filtered(plan: &PlanInfo, tasks: &[TaskInfo], patterns: &[String]) -> Vec<String> {
     let mut paths: Vec<String> = tasks
         .iter()
         .filter(|t| t.plan_id == plan.id)
@@ -90,22 +95,22 @@ fn expected_filtered(plan: &PlanInfo, tasks: &[TaskInfo], patterns: &[String]) -
 }
 
 /// The worktree one plan maps to (the worktree whose id equals the plan's worktree_id), if any.
-fn plan_worktree<'a>(ws: &'a [WtInfo], plan: &PlanInfo) -> Option<&'a WtInfo> {
+pub(crate) fn plan_worktree<'a>(ws: &'a [WtInfo], plan: &PlanInfo) -> Option<&'a WtInfo> {
     ws.iter().find(|w| plan.worktree_id == Some(w.id))
 }
 
 /// Whether any task of a plan is `declared=open`.
-fn plan_has_open_task(plan: &PlanInfo, tasks: &[TaskInfo]) -> bool {
+pub(crate) fn plan_has_open_task(plan: &PlanInfo, tasks: &[TaskInfo]) -> bool {
     tasks
         .iter()
         .any(|t| t.plan_id == plan.id && t.declared == "open")
 }
 
-fn join_two(a: &str, b: &str) -> String {
+pub(crate) fn join_two(a: &str, b: &str) -> String {
     format!("{}, {}", a, b)
 }
 
-fn join_paths(paths: &[String]) -> String {
+pub(crate) fn join_paths(paths: &[String]) -> String {
     let one = |n: usize| {
         if n < paths.len() {
             paths[n].clone()
@@ -308,202 +313,6 @@ fn check_worktree_abandoned(ctx: &CheckCtx) -> Vec<FindingCandidate> {
                 "info",
                 json!({ "last_seen_ms": last }),
                 "inferred",
-            ));
-        }
-    }
-    out
-}
-
-/// `plan.overlap` (Section 9): two **active** plans in different worktrees intersect on
-/// `expected_paths` after `ignore_paths`. Predictive (fires before any edit). Severity `warn`.
-fn check_plan_overlap(ctx: &CheckCtx) -> Vec<FindingCandidate> {
-    let patterns = ctx.config.ignore_paths.clone();
-    let ws = ctx.workspace.worktrees.clone();
-    // (plan, worktree path) for each active plan with a changed set.
-    let mut plan_paths: Vec<(&PlanInfo, String)> = Vec::new();
-    for p in &ctx.workspace.plans {
-        if p.state != "active" {
-            continue;
-        }
-        let wt = plan_worktree(&ws, p);
-        if let Some(wt) = wt {
-            let changed = changed_filter(wt, &patterns);
-            if !changed.is_empty() {
-                plan_paths.push((p, wt.path.clone()));
-            }
-        }
-    }
-    let mut out = Vec::new();
-    for i in 0..plan_paths.len() {
-        for j in (i + 1)..plan_paths.len() {
-            let (a, wa) = &plan_paths[i];
-            let (b, wb) = &plan_paths[j];
-            if wa == wb {
-                continue; // same worktree -> path intersection is a drift concern, not an overlap.
-            }
-            let wa_changed = changed_filter(ws.iter().find(|w| w.path == *wa).unwrap(), &patterns);
-            let wb_changed = changed_filter(ws.iter().find(|w| w.path == *wb).unwrap(), &patterns);
-            let set_b: std::collections::BTreeSet<&String> = wb_changed.iter().collect();
-            let intersection: Vec<String> = wa_changed
-                .iter()
-                .filter(|p| set_b.contains(*p))
-                .cloned()
-                .collect();
-            if intersection.is_empty() {
-                continue;
-            }
-            let (k0, k1) = if a.id <= b.id {
-                (a.id.clone(), b.id.clone())
-            } else {
-                (b.id.clone(), a.id.clone())
-            };
-            out.push(FindingCandidate::new(
-                "plan.overlap",
-                &format!("plan.overlap:{}:{}", k0, k1),
-                &join_two(&a.id, &b.id),
-                &format!(
-                    "active plans {} and {} expect overlapping paths (e.g. {})",
-                    a.id,
-                    b.id,
-                    intersection
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "?".to_string())
-                ),
-                "warn",
-                json!({ "shared": intersection }),
-                "inferred",
-            ));
-        }
-    }
-    out
-}
-
-/// `plan.drift` (Section 9): a file in the plan's worktree changed set that no task expects.
-/// Skipped for plans with no `expected_paths`. One finding per plan, listing up to 20 paths.
-/// Severity `info` (up to 10 paths) or `warn` (more). `dedupe_key = plan.drift:<plan>`.
-fn check_plan_drift(ctx: &CheckCtx) -> Vec<FindingCandidate> {
-    let patterns = ctx.config.ignore_paths.clone();
-    let ws = &ctx.workspace.worktrees;
-    let mut out = Vec::new();
-    for p in &ctx.workspace.plans {
-        // Plans with no expected_paths cannot drift; also skip plans without a worktree.
-        let total_expected: usize = ctx
-            .workspace
-            .tasks
-            .iter()
-            .filter(|t| t.plan_id == p.id)
-            .map(|t| t.expected_paths.len())
-            .sum();
-        if total_expected == 0 {
-            continue; // no task on this plan declares any path -> nothing to drift against.
-        }
-        let wt = match plan_worktree(ws, p) {
-            Some(w) => w,
-            None => continue,
-        };
-        let changed = changed_filter(wt, &patterns);
-        let expected = expected_filtered(p, &ctx.workspace.tasks, &patterns);
-        let expected_set: std::collections::BTreeSet<String> = expected.iter().cloned().collect();
-        let drift: Vec<String> = changed
-            .iter()
-            .filter(|p| !expected_set.contains(*p))
-            .cloned()
-            .collect();
-        if drift.is_empty() {
-            continue;
-        }
-        let list: Vec<String> = drift.iter().take(20).cloned().collect();
-        let severity = if drift.len() > 10 { "warn" } else { "info" };
-        out.push(FindingCandidate::new(
-            "plan.drift",
-            &format!("plan.drift:{}", p.id),
-            &format!("{}: {} drifted file(s)", p.id, drift.len()),
-            &format!(
-                "plan {} has {} path(s) no task expects (showing first {}): {}",
-                p.id,
-                drift.len(),
-                list.len(),
-                join_paths(&list)
-            ),
-            severity,
-            json!({ "paths": drift }),
-            "explicit",
-        ));
-    }
-    out
-}
-
-/// `plan.stalled` (Section 9): active plan with open tasks and no worktree activity for
-/// `stalled_hours`. Severity `info`. `dedupe_key = plan.stalled:<plan>`.
-fn check_plan_stalled(ctx: &CheckCtx) -> Vec<FindingCandidate> {
-    let hours = ctx.config.thresholds.stalled_hours;
-    if hours == 0 {
-        return Vec::new();
-    }
-    let cutoff = ctx.now - (hours as i64) * 3_600_000;
-    let ws = &ctx.workspace.worktrees;
-    let mut out = Vec::new();
-    for p in &ctx.workspace.plans {
-        if p.state != "active" {
-            continue;
-        }
-        if !plan_has_open_task(p, &ctx.workspace.tasks) {
-            continue;
-        }
-        let wt = plan_worktree(ws, p);
-        let last = wt.and_then(|w| ctx.workspace.activity.get(&w.path).cloned().flatten());
-        if let Some(last) = last {
-            if last >= cutoff {
-                continue;
-            }
-        }
-        out.push(FindingCandidate::new(
-            "plan.stalled",
-            &format!("plan.stalled:{}", p.id),
-            &format!("{}: plan stalled", p.id),
-            &format!(
-                "active plan {} has open tasks but no worktree activity for {}h",
-                p.id, hours
-            ),
-            "info",
-            json!({ "last_seen_ms": last }),
-            "inferred",
-        ));
-    }
-    out
-}
-
-/// `plan.checkbox_mismatch` (Section 9): `declared=open` but `observed=committed`; or
-/// `declared=done` and `observed=not_started` with `expected_paths` known. Severity `warn`.
-fn check_checkbox_mismatch(ctx: &CheckCtx) -> Vec<FindingCandidate> {
-    let mut out = Vec::new();
-    for t in &ctx.workspace.tasks {
-        let mut flag: Option<(String, Value)> = None;
-        match (t.declared.as_str(), t.observed.as_str()) {
-            ("open", "committed") => {
-                flag = Some((
-                    "declared open but observed committed".to_string(),
-                    json!({}),
-                ));
-            }
-            ("done", "not_started") if !t.expected_paths.is_empty() => {
-                flag = Some((
-                    "declared done but observed not started".to_string(),
-                    json!({ "paths": t.expected_paths }),
-                ));
-            }
-            _ => {}
-        }
-        if let Some((summary, evidence)) = flag {
-            out.push(FindingCandidate::new(
-                "plan.checkbox_mismatch",
-                &format!("plan.checkbox_mismatch:{}", t.id),
-                &format!("{}: {}", t.id, summary),
-                &summary,
-                "warn",
-                evidence,
-                "explicit",
             ));
         }
     }

@@ -1,5 +1,6 @@
 pub mod app;
 pub mod client;
+pub mod tabs;
 pub mod ui;
 
 use std::time::{Duration, Instant};
