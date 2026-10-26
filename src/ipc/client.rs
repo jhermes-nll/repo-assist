@@ -79,8 +79,21 @@ impl Client {
         Ok(Client { stream })
     }
 
-    /// Send one request and read its single response line (Section 6).
+    /// Send one request and read its single response line (Section 6), with the default
+    /// 3-second read timeout.
     pub fn call(&mut self, method: Method, params: Value) -> Result<Reply, IpcError> {
+        self.call_timeout(method, params, std::time::Duration::from_secs(3))
+    }
+
+    /// Like [`call`](Self::call) but with an explicit read timeout, used by long-polling
+    /// subscribers (`Method::Subscribe`) so they do not spuriously time out.
+    pub fn call_timeout(
+        &mut self,
+        method: Method,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Reply, IpcError> {
+        let _ = self.stream.set_read_timeout(Some(timeout));
         write_line(&mut self.stream, &Request::new(1, method, params)).map_err(io_err_to_ipc)?;
         read_reply(&mut self.stream).map_err(io_err_to_ipc)
     }
