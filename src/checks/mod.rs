@@ -82,7 +82,11 @@ pub(crate) fn changed_filter(wt: &WtInfo, patterns: &[String]) -> Vec<String> {
 
 /// The changed paths a plan expects (union of its tasks' `expected_paths`), filtered by
 /// `ignore_paths`.
-pub(crate) fn expected_filtered(plan: &PlanInfo, tasks: &[TaskInfo], patterns: &[String]) -> Vec<String> {
+pub(crate) fn expected_filtered(
+    plan: &PlanInfo,
+    tasks: &[TaskInfo],
+    patterns: &[String],
+) -> Vec<String> {
     let mut paths: Vec<String> = tasks
         .iter()
         .filter(|t| t.plan_id == plan.id)

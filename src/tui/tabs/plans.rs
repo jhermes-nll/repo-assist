@@ -39,7 +39,10 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         "select a plan and press Enter for tasks/evidence".to_string()
     };
-    let para = Paragraph::new(detail_text)
-        .block(Block::default().borders(Borders::ALL).title("Tasks / Evidence"));
+    let para = Paragraph::new(detail_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Tasks / Evidence"),
+    );
     frame.render_widget(para, chunks[1]);
 }

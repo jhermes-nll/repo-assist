@@ -179,10 +179,7 @@ impl DataSource {
                 let task_count = p.get("task_count").and_then(|v| v.as_i64()).unwrap_or(0);
                 let declared = p.get("declared_done").and_then(|v| v.as_i64()).unwrap_or(0);
                 let observed = p.get("observed_done").and_then(|v| v.as_i64()).unwrap_or(0);
-                let stalled = p
-                    .get("stalled")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let stalled = p.get("stalled").and_then(|v| v.as_bool()).unwrap_or(false);
                 let mut row = Row::with_id(id, t.clone());
                 row.cells = vec![
                     t,

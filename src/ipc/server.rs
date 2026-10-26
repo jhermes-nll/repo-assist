@@ -309,8 +309,8 @@ pub fn render_views_json(
     }
     let status = status_json(store, repo_key)
         .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
-    let plans =
-        plans_json(store, config).map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
+    let plans = plans_json(store, config)
+        .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
     let findings = findings_json(store, &Value::Null)
         .map_err(|e| crate::views::write::ViewError::Store(e.to_string()))?;
     let sessions =

@@ -34,11 +34,8 @@ pub fn check_plan_overlap(ctx: &CheckCtx) -> Vec<FindingCandidate> {
                 continue; // same worktree -> path intersection is a drift concern, not an overlap.
             }
             let set_b: std::collections::BTreeSet<&String> = eb.iter().collect();
-            let intersection: Vec<String> = ea
-                .iter()
-                .filter(|p| set_b.contains(*p))
-                .cloned()
-                .collect();
+            let intersection: Vec<String> =
+                ea.iter().filter(|p| set_b.contains(*p)).cloned().collect();
             if intersection.is_empty() {
                 continue;
             }
