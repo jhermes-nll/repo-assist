@@ -6,7 +6,7 @@
 
 ## Task 1: Append a marker line to status.md
 
-- [ ] Append exactly this line to the end of `status.md`: `Smoke test 2: superpowers_full committed this with the task work.`
+- [x] Append exactly this line to the end of `status.md`: `Smoke test 2: superpowers_full committed this with the task work.`
   - Files: `status.md` only. Do not reformat, retitle, or touch any other file.
   - Verify: `grep -c "Smoke test 2: superpowers_full committed this with the task work." status.md` prints `1` and exits 0.
   - Done when: that command prints `1`.
