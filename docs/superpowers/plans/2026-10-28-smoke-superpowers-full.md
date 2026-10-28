@@ -6,7 +6,7 @@
 
 ## Task 1: Append a smoke-test line to README.md
 
-- [ ] Append exactly this line to the end of `README.md`: `Smoke test: superpowers_full graph executed end to end.`
+- [x] Append exactly this line to the end of `README.md`: `Smoke test: superpowers_full graph executed end to end.`
   - Files: `README.md` only.
   - No other change. Do not reformat, retitle, or touch any other file.
   - Verify: `grep -c "Smoke test: superpowers_full graph executed end to end." README.md` prints `1` and exits 0.
