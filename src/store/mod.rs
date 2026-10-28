@@ -494,6 +494,19 @@ impl Store {
         })
     }
 
+    /// Every known worktree as `(id, path)`. Plan discovery scans these (not only worktrees
+    /// that already own a plan), otherwise the first plan could never be discovered.
+    pub fn worktree_id_paths(&self) -> Result<Vec<(i64, String)>, StoreError> {
+        self.read(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT id, path FROM worktrees WHERE present = 1 ORDER BY id")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+        })
+    }
+
     /// The plan-to-worktree references the daemon drifts against (Task 3): one entry per
     /// plan, paired with the worktree `plans.worktree_id` points at (path, branch, base ref).
     ///

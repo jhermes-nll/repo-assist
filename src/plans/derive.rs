@@ -45,7 +45,10 @@ pub struct ObservedOutcome {
 /// Pure derivation matching the Section 9 truth table (new API).
 pub fn derive_observed(input: &DeriveInput) -> ObservedOutcome {
     if input.expected_paths.is_empty() {
-        return ObservedOutcome { state: "unknown", evidence: Vec::new() };
+        return ObservedOutcome {
+            state: "unknown",
+            evidence: Vec::new(),
+        };
     }
 
     // Reachable commits: those made after `plan_first_commit_sha`, when known.
@@ -83,7 +86,10 @@ pub fn derive_observed(input: &DeriveInput) -> ObservedOutcome {
             .find(|c| c.files.iter().any(|f| f == path))
     };
 
-    let committed = input.expected_paths.iter().all(|p| first_commit_for(p).is_some());
+    let committed = input
+        .expected_paths
+        .iter()
+        .all(|p| first_commit_for(p).is_some());
 
     if committed {
         let mut shas: BTreeSet<String> = BTreeSet::new();
@@ -106,10 +112,14 @@ pub fn derive_observed(input: &DeriveInput) -> ObservedOutcome {
         };
     }
 
-    let changed: std::collections::BTreeSet<&str> = input.changed_paths.iter().map(String::as_str).collect();
+    let changed: std::collections::BTreeSet<&str> =
+        input.changed_paths.iter().map(String::as_str).collect();
     let touched_some = input.expected_paths.iter().any(|p| {
         changed.contains(p.as_str())
-            || input.branch_commits.iter().any(|c| c.files.iter().any(|f| f == p))
+            || input
+                .branch_commits
+                .iter()
+                .any(|c| c.files.iter().any(|f| f == p))
     });
     if touched_some {
         let mut shas: BTreeSet<String> = BTreeSet::new();

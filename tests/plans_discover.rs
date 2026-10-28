@@ -72,7 +72,9 @@ fn superpowers_plan_flip_and_gone() {
         .args(["rev-parse", "HEAD"])
         .output()
         .unwrap();
-    let commit_sha = String::from_utf8_lossy(&commit_sha.stdout).trim().to_string();
+    let commit_sha = String::from_utf8_lossy(&commit_sha.stdout)
+        .trim()
+        .to_string();
 
     // Re-sync worktrees (HEAD moved) then plans.
     sync_worktrees(&store, repo.path()).expect("sync_worktrees2");
@@ -116,7 +118,10 @@ fn superpowers_plan_flip_and_gone() {
             Ok(out)
         })
         .expect("evidence");
-    assert!(evidence_refs.contains(&commit_sha), "evidence must contain {commit_sha}: {evidence_refs:?}");
+    assert!(
+        evidence_refs.contains(&commit_sha),
+        "evidence must contain {commit_sha}: {evidence_refs:?}"
+    );
 
     // Idempotency-ish: evidence count remains after re-sync.
     // Delete plan file and re-sync -> gone.
@@ -135,4 +140,3 @@ fn superpowers_plan_flip_and_gone() {
         .expect("plan row gone");
     assert_eq!(gone_state, "gone");
 }
-

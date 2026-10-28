@@ -21,15 +21,27 @@ pub trait PlanAdapter {
 }
 
 impl<T: PlanAdapter + ?Sized> PlanAdapter for &T {
-    fn name(&self) -> &str { (**self).name() }
-    fn globs(&self) -> &[String] { (**self).globs() }
-    fn parse(&self, text: &str) -> ParsedPlan { (**self).parse(text) }
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+    fn globs(&self) -> &[String] {
+        (**self).globs()
+    }
+    fn parse(&self, text: &str) -> ParsedPlan {
+        (**self).parse(text)
+    }
 }
 
 impl<T: PlanAdapter + ?Sized> PlanAdapter for Box<T> {
-    fn name(&self) -> &str { (**self).name() }
-    fn globs(&self) -> &[String] { (**self).globs() }
-    fn parse(&self, text: &str) -> ParsedPlan { (**self).parse(text) }
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+    fn globs(&self) -> &[String] {
+        (**self).globs()
+    }
+    fn parse(&self, text: &str) -> ParsedPlan {
+        (**self).parse(text)
+    }
 }
 
 /// Superpowers adapter: default glob `docs/superpowers/plans/*.md`.
@@ -40,14 +52,22 @@ pub struct SuperpowersAdapter {
 
 impl Default for SuperpowersAdapter {
     fn default() -> Self {
-        Self { globs: vec!["docs/superpowers/plans/*.md".to_string()] }
+        Self {
+            globs: vec!["docs/superpowers/plans/*.md".to_string()],
+        }
     }
 }
 
 impl PlanAdapter for SuperpowersAdapter {
-    fn name(&self) -> &str { "superpowers" }
-    fn globs(&self) -> &[String] { &self.globs }
-    fn parse(&self, text: &str) -> ParsedPlan { crate::plans::superpowers::parse(text) }
+    fn name(&self) -> &str {
+        "superpowers"
+    }
+    fn globs(&self) -> &[String] {
+        &self.globs
+    }
+    fn parse(&self, text: &str) -> ParsedPlan {
+        crate::plans::superpowers::parse(text)
+    }
 }
 
 /// Generic checklist adapter.
@@ -69,9 +89,15 @@ impl Default for ChecklistAdapter {
 }
 
 impl PlanAdapter for ChecklistAdapter {
-    fn name(&self) -> &str { "checklist" }
-    fn globs(&self) -> &[String] { &self.globs }
-    fn parse(&self, text: &str) -> ParsedPlan { crate::plans::checklist::parse(text) }
+    fn name(&self) -> &str {
+        "checklist"
+    }
+    fn globs(&self) -> &[String] {
+        &self.globs
+    }
+    fn parse(&self, text: &str) -> ParsedPlan {
+        crate::plans::checklist::parse(text)
+    }
 }
 
 /// Convenience: the default adapter set.
@@ -133,7 +159,9 @@ where
         let adapter = &adapter;
         for glob in adapter.globs() {
             for file in discover_files(wt_path, glob) {
-                let Ok(text) = fs::read_to_string(&file) else { continue };
+                let Ok(text) = fs::read_to_string(&file) else {
+                    continue;
+                };
                 let parsed = adapter.parse(&text);
                 let rel = match file.strip_prefix(wt_path) {
                     Ok(r) => r.to_string_lossy().replace('\\', "/"),
@@ -149,7 +177,11 @@ where
                     parsed.title.clone()
                 };
                 let declared_state = parsed.declared_state();
-                let state = if declared_state == "done" { "done" } else { "active" };
+                let state = if declared_state == "done" {
+                    "done"
+                } else {
+                    "active"
+                };
                 let content_hash = sha256_hex(&text);
 
                 let row = PlanRow {
@@ -193,10 +225,14 @@ where
     // Derive observed state for each plan.
     let wt_info: Option<(Option<String>, Option<String>, Option<String>)> = store
         .read(|conn| {
-            let mut stmt = conn
-                .prepare("SELECT merge_base, branch, base_ref FROM worktrees WHERE id = ?1")?;
+            let mut stmt =
+                conn.prepare("SELECT merge_base, branch, base_ref FROM worktrees WHERE id = ?1")?;
             let mut rows = stmt.query_map([worktree_id], |r| {
-                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
             })?;
             if let Some(r) = rows.next() {
                 Ok(Some(r?))

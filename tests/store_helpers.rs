@@ -57,7 +57,9 @@ fn set_task_observed_and_clear_evidence() {
         .unwrap();
 
     // set_task_observed visible.
-    store.set_task_observed("t1", "committed", Some("reason")).unwrap();
+    store
+        .set_task_observed("t1", "committed", Some("reason"))
+        .unwrap();
     let (obs, reason): (String, Option<String>) = store
         .read(|conn| {
             conn.query_row(
@@ -84,4 +86,23 @@ fn set_task_observed_and_clear_evidence() {
         })
         .unwrap();
     assert_eq!(kinds, vec!["manual".to_string()]);
+}
+
+#[test]
+fn worktree_id_paths_lists_present_worktrees_without_plans() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store = Store::open(dir.path().join("db.sqlite")).unwrap();
+    store
+        .write(|conn| {
+            conn.execute(
+                "INSERT INTO worktrees(path, branch, is_main, present, updated_ms) VALUES ('/a', 'main', 1, 1, 0), ('/gone', 'x', 0, 0, 0)",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    // No plan rows exist yet: discovery must still see the worktree.
+    let wts = store.worktree_id_paths().unwrap();
+    assert_eq!(wts.len(), 1);
+    assert_eq!(wts[0].1, "/a");
 }

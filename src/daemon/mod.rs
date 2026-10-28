@@ -109,21 +109,22 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
         let store = store.clone();
         let stop_rx_plans = stop_rx.clone();
         std::thread::spawn(move || {
+            // First pass shortly after startup (worktrees are synced by then), then every 60s.
+            let mut delay = Duration::from_secs(3);
             loop {
-                std::thread::sleep(Duration::from_secs(60));
+                std::thread::sleep(delay);
+                delay = Duration::from_secs(60);
                 if stop_rx_plans.borrow().is_some() {
                     break;
                 }
-                if let Ok(wts) = store.plan_worktrees() {
-                    for pw in wts {
-                        if let (Some(id), Some(path)) = (pw.worktree_id, pw.path.as_deref()) {
-                            let _ = crate::plans::discover::sync_plans(
-                                &store,
-                                id,
-                                Path::new(path),
-                                crate::plans::discover::default_adapters(),
-                            );
-                        }
+                if let Ok(wts) = store.worktree_id_paths() {
+                    for (id, path) in wts {
+                        let _ = crate::plans::discover::sync_plans(
+                            &store,
+                            id,
+                            Path::new(&path),
+                            crate::plans::discover::default_adapters(),
+                        );
                     }
                 }
             }

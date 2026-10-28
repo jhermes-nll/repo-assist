@@ -1,6 +1,6 @@
 mod common;
 
-use repo_assist::plans::derive::{derive_observed, DeriveInput, CommitTouch};
+use repo_assist::plans::derive::{derive_observed, CommitTouch, DeriveInput};
 use repo_assist::sources::git::CommitTouch as GitCommitTouch;
 
 fn touch(sha: &str, files: &[&str]) -> CommitTouch {
