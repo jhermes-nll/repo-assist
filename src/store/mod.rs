@@ -34,36 +34,10 @@ pub const SCHEMA_VERSION: u32 = migrations::CURRENT_VERSION;
 
 /// Retention cap for the `events` table: only the newest N rows are kept.
 pub const EVENT_CAP: usize = 1000;
-/// Backwards-compatible aliases for [`EVENT_CAP`].
-pub const EVENTS_CAP: usize = EVENT_CAP;
-pub const EVENT_CAP_ROWS: usize = EVENT_CAP;
-pub const EVENTS_CAP_ROWS: usize = EVENT_CAP;
-pub const EVENT_TABLE_CAP: usize = EVENT_CAP;
-pub const EVENTS_TABLE_CAP: usize = EVENT_CAP;
-pub const EVENT_RETENTION_CAP: usize = EVENT_CAP;
-pub const EVENTS_RETENTION_CAP: usize = EVENT_CAP;
-pub const EVENT_LIMIT: usize = EVENT_CAP;
-pub const EVENTS_LIMIT: usize = EVENT_CAP;
-pub const MAX_EVENTS: usize = EVENT_CAP;
-pub const MAX_EVENT_ROWS: usize = EVENT_CAP;
 
 /// Ring size for the `tool_calls` table per session: only the newest N calls are
 /// retained (older calls are dropped when the ring is full).
 pub const TOOL_CALL_RING_SIZE: usize = 256;
-/// Backwards-compatible aliases for [`TOOL_CALL_RING_SIZE`].
-pub const TOOL_CALLS_RING_SIZE: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALL_CAP: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALLS_CAP: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALL_CAP_ROWS: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALLS_CAP_ROWS: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALL_RING: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALLS_RING: usize = TOOL_CALL_RING_SIZE;
-pub const MAX_TOOL_CALLS: usize = TOOL_CALL_RING_SIZE;
-pub const MAX_TOOL_CALL_ROWS: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALL_RETENTION_CAP: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALLS_RETENTION_CAP: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALL_LIMIT: usize = TOOL_CALL_RING_SIZE;
-pub const TOOL_CALLS_LIMIT: usize = TOOL_CALL_RING_SIZE;
 
 /// Options controlling how a [`Store`] opens a database.
 #[derive(Debug, Clone, Default)]

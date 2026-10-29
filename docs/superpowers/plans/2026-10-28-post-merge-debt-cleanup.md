@@ -8,23 +8,23 @@ small, concrete debt flagged by two review rounds. **No new features, no behavio
 
 ## Tasks
 
-- [ ] **1. Remove dead alias constants.** `src/store/mod.rs:35-70` holds ~25 `const` aliases
+- [x] **1. Remove dead alias constants.** `src/store/mod.rs:35-70` holds ~25 `const` aliases
   with zero references. Verify each with `rg -n '<NAME>' src/ tests/` before deleting; keep
   any that is still used and note why. Done when no unreferenced `const` remains and
   `cargo build` is clean.
 
-- [ ] **2. Guard the leaking daemon spawn in a test.** `tests/daemon_zero_writes.rs:108`
+- [x] **2. Guard the leaking daemon spawn in a test.** `tests/daemon_zero_writes.rs:108`
   spawns `ra daemon --foreground` but only calls `kill()`/`wait()` at end of test, so a
   failed assertion orphans a daemon that spins against a deleted temp dir — the exact flake
   class already fixed in seven other test files. Reuse the kill-on-drop guard + `Stdio::null()`
   pattern at `tests/subscribe_rpc.rs:27-46`.
 
-- [ ] **3. Clear the 5 pre-existing clippy warnings.** `src/lib.rs:11-12` (duplicated
+- [x] **3. Clear the 5 pre-existing clippy warnings.** `src/lib.rs:11-12` (duplicated
   attribute), `src/plans/discover.rs:122` (empty line after doc comment),
   `src/plans/derive.rs:234` and `:250` (`unnecessary_get_then_check`). If a lint fix would
   change behavior, leave it and report instead.
 
-- [ ] **4. Refresh `docs/status.md`.** It reports a stale test count and commit. Update to
+- [x] **4. Refresh `docs/status.md`.** It reports a stale test count and commit. Update to
   **124** tests and the current commit, and note that the seven `overnight-*` branches landed.
   Do not delete or strike a "Known limitations" entry unless code or a test backs it.
 

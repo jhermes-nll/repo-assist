@@ -119,9 +119,8 @@ pub fn plan_globs() -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// Module-level helper exposed via `src/plans/mod.rs` re-export (daemon calls `crate::plans::plan_globs()`).
+// Module-level helper exposed via `src/plans/mod.rs` re-export (daemon calls `crate::plans::plan_globs()`).
 // (kept here for compatibility; mod.rs re-exports below conceptually)
-
 #[allow(dead_code)]
 fn _mod_plan_globs() {}
 

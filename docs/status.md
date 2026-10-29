@@ -80,23 +80,30 @@ Not exposed as RPC (run locally by CLI): `Doctor`.
 |---|---:|---|
 | `cli.rs` | 1 | CLI wiring |
 | `config.rs` | 7 | config load |
+| `daemon_zero_writes.rs` | 1 | daemon does no writes on read-only paths |
+| `derive.rs` | 6 | plan derivation |
 | `doctor.rs` | 7 | environment checks |
-| `findings_engine.rs` | 4 | findings lifecycle (open → acked/resolved → reopen) |
+| `findings_engine.rs` | 5 | findings lifecycle (open → acked/resolved → reopen) |
 | `findings_kind.rs` | 1 | findings `--kind` filter over real IPC path |
 | `fswatch.rs` | 2 | fs watcher |
 | `git_repo.rs` | 3 | git repo ops |
 | `git_source.rs` | 8 | changed-file sets |
+| `lib` (unit) | 2 | in-crate unit tests |
 | `null_is_error.rs` | 1 | a NULL `tool_calls.is_error` does not break the findings workspace build |
+| `plans_discover.rs` | 1 | plan file discovery |
+| `plans_parse.rs` | 16 | plan file parsers |
 | `stale_socket.rs` | 1 | a present-but-unlistened socket is recovered from by auto-spawning a daemon |
-| `store.rs` | 3 | store CRUD |
+| `store.rs` | 5 | store CRUD |
+| `store_helpers.rs` | 2 | store helpers |
+| `subscribe_rpc.rs` | 6 | subscribe RPC |
 | `task_2_3.rs` | 2 | worktree event bus |
 | `task_2_4.rs` | 3 | plans data model + IPC |
 | `task_3.rs` | 3 | **drift** (drifts when a task doesn't expect it, reports nothing otherwise, unknown plan -> None) |
 | `task_4.rs` | 12 | Task 4 acceptance: pi session source, ingest, worktree mapping, `ra sessions` end-to-end |
 | `tui.rs` | 18 | four-tab TUI |
-| `views_render.rs` | 9 | view rendering + atomic writes |
+| `views_render.rs` | 11 | view rendering + atomic writes |
 
-The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` (per-suite: cli 1, config 7, doctor 7, findings_engine 4, findings_kind 1, fswatch 2, git_repo 3, git_source 8, null_is_error 1, stale_socket 1, store 3, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 9).
+The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets` is clean for the files in this cleanup, but still reports two pre-existing `duplicated_attributes` warnings at `src/main.rs:10-11` (outside this cleanup's scope, so `-D warnings` does not exit 0), and `cargo test` = `test result: ok. 124 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out` (per-suite: lib 2, cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, fswatch 2, git_repo 3, git_source 8, null_is_error 1, plans_discover 1, plans_parse 16, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 11; `performance` 0 passed / 1 ignored). Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
 
 ## Commits on `main`
 
@@ -128,7 +135,7 @@ The three gates are re-verified on this machine for this task: `cargo fmt --chec
 | `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
 | `e41085e` | fix(test): repair tui detail-clears test |
 
-Latest commit: `e41085e`.
+Latest `main` commit: `fa17ffa`. The seven `overnight-*` branches have landed on `main` (101 -> 124 tests).
 
 ## Status summary
 

@@ -231,7 +231,7 @@ pub fn derive(
     // committed: every expected path appears in a branch commit after the plan's first commit.
     if expected_paths
         .iter()
-        .all(|p| newest_commit_per_path.get(p.as_str()).is_some())
+        .all(|p| newest_commit_per_path.contains_key(p.as_str()))
     {
         let mut shas: BTreeSet<String> = BTreeSet::new();
         for p in expected_paths {
@@ -245,10 +245,7 @@ pub fn derive(
 
     // in_progress: at least one expected path is staged/unstaged/untracked, or in some branch
     // commit (but not all, so it is not yet committed).
-    let changed_paths: BTreeSet<&str> = changed
-        .iter()
-        .filter_map(|(p, _)| Some(p.as_str()))
-        .collect();
+    let changed_paths: BTreeSet<&str> = changed.iter().map(|(p, _)| p.as_str()).collect();
     let touched_some = expected_paths.iter().any(|p| {
         changed_paths.contains(p.as_str()) || newest_commit_per_path.contains_key(p.as_str())
     });

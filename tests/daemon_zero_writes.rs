@@ -67,6 +67,25 @@ fn commit_count(wt: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+struct DaemonGuard(std::process::Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+impl std::ops::Deref for DaemonGuard {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DaemonGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 type WorktreeSnapshot = (String, Vec<u8>, String);
 
 fn snapshot(repo: &common::GitRepo) -> Vec<WorktreeSnapshot> {
@@ -105,7 +124,7 @@ fn daemon_writes_nothing_inside_any_worktree() {
     };
 
     let ra_bin = std::env::var("CARGO_BIN_EXE_ra").expect("ra binary path");
-    let mut daemon = Command::new(&ra_bin)
+    let daemon = Command::new(&ra_bin)
         .arg("daemon")
         .arg("--foreground")
         .env("HOME", "/tmp")
@@ -117,6 +136,7 @@ fn daemon_writes_nothing_inside_any_worktree() {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn daemon");
+    let mut daemon = DaemonGuard(daemon);
 
     // Wait for the socket, then let the daemon run: the findings pass fires once
     // immediately, the event bus drains, and (with the default config) the debounced

@@ -8,9 +8,6 @@
 //! spec-fidelity issues surface as compile errors (clippy `-D warnings`), never as
 //! runtime panics.
 
-#![deny(clippy::unwrap_used)]
-#![deny(clippy::expect_used)]
-
 pub mod checks;
 pub mod cli;
 pub mod config;
