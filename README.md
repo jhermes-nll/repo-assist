@@ -95,7 +95,7 @@ Retention: `events` table capped to the newest `EVENT_CAP` rows (1000); `tool_ca
 
 ## How to add an agent adapter
 
-1. Add a module under `src/agents/` (see `src/agents` and `src/sources/sessions.rs` for the pi reference).
+1. Add a module under `src/sources/` (see `src/sources/sessions.rs` — `ingest_file`, `sync_sessions`, and `Store::upsert_session_with_calls` for the pi reference).
 2. Implement read-only ingest into `sessions`/`tool_calls` via `Store::upsert_session_with_calls`, mapping cwd -> worktree.
 3. Add config under `[sources.<adapter>]` and tick in the daemon if needed. The daemon never writes inside the work tree, including session files.
 

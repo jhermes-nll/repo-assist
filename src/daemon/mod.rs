@@ -119,12 +119,14 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
                 }
                 if let Ok(wts) = store.worktree_id_paths() {
                     for (id, path) in wts {
-                        let _ = crate::plans::discover::sync_plans(
+                        if let Err(e) = crate::plans::discover::sync_plans(
                             &store,
                             id,
                             Path::new(&path),
                             crate::plans::discover::default_adapters(),
-                        );
+                        ) {
+                            tracing::warn!("sync_plans failed for worktree {id} ({path}): {e}");
+                        }
                     }
                 }
             }

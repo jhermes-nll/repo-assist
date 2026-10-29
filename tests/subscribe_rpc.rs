@@ -6,20 +6,45 @@ use repo_assist::store::Store;
 use std::time::Duration;
 use tempfile::TempDir;
 
+struct DaemonGuard(std::process::Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+impl std::ops::Deref for DaemonGuard {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DaemonGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 fn spawn_daemon(
     repo_root: &std::path::Path,
     state: &std::path::Path,
     runtime: &std::path::Path,
-) -> std::process::Child {
-    std::process::Command::new(std::env::var("CARGO_BIN_EXE_ra").unwrap())
-        .env("HOME", state)
-        .env("XDG_STATE_HOME", state)
-        .env("XDG_RUNTIME_DIR", runtime)
-        .current_dir(repo_root)
-        .arg("daemon")
-        .arg("--foreground")
-        .spawn()
-        .expect("spawn daemon")
+) -> DaemonGuard {
+    use std::process::Stdio;
+    DaemonGuard(
+        std::process::Command::new(std::env::var("CARGO_BIN_EXE_ra").unwrap())
+            .env("HOME", state)
+            .env("XDG_STATE_HOME", state)
+            .env("XDG_RUNTIME_DIR", runtime)
+            .current_dir(repo_root)
+            .arg("daemon")
+            .arg("--foreground")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    )
 }
 
 fn wait_socket(sock: &std::path::Path) {
@@ -91,7 +116,7 @@ fn subscribe_rpc_shape_and_cursor() {
             .unwrap();
     }
 
-    let child = spawn_daemon(repo_root, state.path(), _runtime.path());
+    let mut child = spawn_daemon(repo_root, state.path(), _runtime.path());
     wait_socket(&sock);
 
     let mut client = Client::connect(&sock).unwrap();
@@ -121,7 +146,8 @@ fn subscribe_rpc_shape_and_cursor() {
         repo_assist::ipc::Reply::Error { error, .. } => panic!("subscribe failed: {:?}", error),
     }
 
-    drop(child);
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[test]
@@ -240,4 +266,37 @@ fn no_duplicate_rows_after_reconnect() {
 
     let _ = g2.kill();
     let _ = g2.wait();
+}
+
+#[test]
+fn subscribe_prune_boundary_misses_old_events() {
+    // Bounded retention: an event pruned while a subscriber's cursor is still behind it
+    // is never delivered. This asserts that documented behavior explicitly rather than
+    // assuming subscribers always catch up.
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("store.db");
+    let store = Store::open(&db).unwrap();
+    let first = store
+        .append_event(1, "test", "ping", Some("s"), "{\"x\":1}")
+        .unwrap();
+
+    for i in 0..repo_assist::store::EVENT_CAP {
+        store
+            .append_event(i as i64 + 2, "test", "fill", Some("s"), "{}")
+            .unwrap();
+    }
+
+    let all = store.list_events_since(0, 100_000).unwrap();
+    assert!(
+        !all.iter().any(|e| e.id == first),
+        "first event should have been pruned"
+    );
+
+    // A stale cursor (first) cannot recover the pruned row; only retained rows remain.
+    let since = store.list_events_since(first, 100_000).unwrap();
+    assert!(
+        !since.iter().any(|e| e.id == first),
+        "pruned event must not be resurrected by a lagging cursor"
+    );
+    assert!(since.len() <= repo_assist::store::EVENT_CAP);
 }

@@ -95,6 +95,7 @@ fn all_ok_exits_zero() {
 
     let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
     // start daemon
+    use std::process::Stdio;
     let cmd = std::process::Command::new(&ra_bin)
         .arg("daemon")
         .arg("--foreground")
@@ -102,6 +103,9 @@ fn all_ok_exits_zero() {
         .env("XDG_STATE_HOME", state.path())
         .env("XDG_RUNTIME_DIR", runtime.path())
         .current_dir(repo.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     struct G(std::process::Child);

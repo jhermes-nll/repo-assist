@@ -640,12 +640,16 @@ fn ra_sessions_end_to_end_over_ipc() {
     ];
     let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
 
+    use std::process::Stdio;
     let _daemon = DaemonGuard(
         std::process::Command::new(&ra_bin)
             .arg("daemon")
             .arg("--foreground")
             .envs(envs.iter().cloned())
             .current_dir(repo.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .expect("spawn ra daemon --foreground"),
     );

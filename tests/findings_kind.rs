@@ -48,6 +48,7 @@ fn findings_kind_filters_over_ipc() {
     store.sync_findings(vec![c1, c2], 1000).unwrap();
 
     let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
+    use std::process::Stdio;
     let cmd = std::process::Command::new(&ra_bin)
         .arg("daemon")
         .arg("--foreground")
@@ -55,6 +56,9 @@ fn findings_kind_filters_over_ipc() {
         .env("XDG_STATE_HOME", state.path())
         .env("XDG_RUNTIME_DIR", runtime.path())
         .current_dir(repo.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let _g = DaemonGuard(cmd);

@@ -237,6 +237,7 @@ fn spawn_daemon(
     state: &std::path::Path,
     runtime: &std::path::Path,
 ) -> DaemonGuard {
+    use std::process::Stdio;
     let cmd = std::process::Command::new(ra_bin)
         .env("HOME", state)
         .env("XDG_STATE_HOME", state)
@@ -244,6 +245,9 @@ fn spawn_daemon(
         .current_dir(repo_root)
         .arg("daemon")
         .arg("--foreground")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("spawn daemon");
     DaemonGuard(cmd)

@@ -231,7 +231,7 @@ pub fn derive(
     // committed: every expected path appears in a branch commit after the plan's first commit.
     if expected_paths
         .iter()
-        .all(|p| !newest_commit_per_path.get(p.as_str()).is_none())
+        .all(|p| newest_commit_per_path.get(p.as_str()).is_some())
     {
         let mut shas: BTreeSet<String> = BTreeSet::new();
         for p in expected_paths {

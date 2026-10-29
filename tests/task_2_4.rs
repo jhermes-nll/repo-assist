@@ -268,12 +268,16 @@ fn ra_plans_and_plan_over_ipc() {
     // Spawn the daemon foreground. Keep it alive for the whole test — the client commands
     // below connect to this daemon's socket (`--foreground` does not detach), which avoids
     // the auto-spawn path (which would `current_exe()` the test binary and fail).
+    use std::process::Stdio;
     let _daemon = DaemonGuard(
         std::process::Command::new(ra_bin)
             .envs(envs.iter().cloned())
             .current_dir(repo_root)
             .arg("daemon")
             .arg("--foreground")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .expect("spawn ra daemon --foreground"),
     );

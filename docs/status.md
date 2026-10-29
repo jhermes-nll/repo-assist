@@ -142,9 +142,9 @@ Latest commit: `e41085e`.
 
 ## Known limitations
 
-- Known limitation (open): bare `ra findings` (neither `--open` nor `--all`) applies no state filter, so resolved rows appear alongside open ones.
-
 ### Fixed
+
+- ~~bare `ra findings` (neither `--open` nor `--all`) applies no state filter, so resolved rows appear alongside open ones~~ — fixed in `fd09782`: bare `ra findings` now excludes resolved rows (`tests/findings_engine.rs::bare_findings_excludes_resolved`).
 
 - ~~stale-socket brick~~ — fixed in `350b8df`: `UnixStream::connect` failures with `ErrorKind::ConnectionRefused` are now classified as `IpcError::Stale`, and `resolve_sock` removes the stale socket and pidfile before spawning. Other connect errors still surface.
 - ~~`is_error` NULL~~ — fixed in `350b8df`: `TC.is_error` is now `Option<bool>`; `checks/mod.rs` coerces with `unwrap_or(false)`, so NULL rows no longer break `check_workspace`.

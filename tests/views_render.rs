@@ -163,6 +163,7 @@ fn render_views_rpc_over_daemon() {
     std::fs::create_dir_all(&sf.dir).unwrap();
 
     let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
+    use std::process::Stdio;
     let cmd = std::process::Command::new(&ra_bin)
         .arg("daemon")
         .arg("--foreground")
@@ -170,6 +171,9 @@ fn render_views_rpc_over_daemon() {
         .env("XDG_STATE_HOME", state.path())
         .env("XDG_RUNTIME_DIR", runtime.path())
         .current_dir(repo.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     struct G(std::process::Child);
