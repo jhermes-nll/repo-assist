@@ -306,6 +306,7 @@ fn check_worktree_abandoned(ctx: &CheckCtx) -> Vec<FindingCandidate> {
         let active_plan_with_open = ctx.workspace.plans.iter().any(|p| {
             p.worktree_id == Some(wt.id)
                 && p.state == "active"
+                && p.source != crate::plans::discover::SPEC_SOURCE
                 && plan_has_open_task(p, &ctx.workspace.tasks)
         });
         if (uncommitted || active_plan_with_open) && last.is_none_or(|t| t < cutoff) {

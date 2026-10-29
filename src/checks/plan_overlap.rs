@@ -13,7 +13,7 @@ pub fn check_plan_overlap(ctx: &CheckCtx) -> Vec<FindingCandidate> {
     // (plan, worktree path, expected paths) for each active plan attached to a worktree.
     let mut plan_paths: Vec<(&PlanInfo, String, Vec<String>)> = Vec::new();
     for p in &ctx.workspace.plans {
-        if p.state != "active" {
+        if p.state != "active" || p.source == crate::plans::discover::SPEC_SOURCE {
             continue;
         }
         let wt = super::plan_worktree(ws, p);

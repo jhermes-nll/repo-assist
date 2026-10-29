@@ -422,7 +422,11 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
             out
         };
         let active_plans: i64 = conn
-            .query_row("SELECT COUNT(*) FROM plans WHERE state='active'", [], |r| r.get(0))?;
+            .query_row(
+                "SELECT COUNT(*) FROM plans WHERE state='active' AND source != ?1",
+                [crate::plans::discover::SPEC_SOURCE],
+                |r| r.get(0),
+            )?;
         let open_findings: i64 = conn
             .query_row("SELECT COUNT(*) FROM findings WHERE state='open'", [], |r| r.get(0))?;
         let sessions: i64 =

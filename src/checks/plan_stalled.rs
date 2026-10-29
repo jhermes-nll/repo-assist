@@ -14,7 +14,7 @@ pub fn check_plan_stalled(ctx: &CheckCtx) -> Vec<FindingCandidate> {
     let ws = &ctx.workspace.worktrees;
     let mut out = Vec::new();
     for p in &ctx.workspace.plans {
-        if p.state != "active" {
+        if p.state != "active" || p.source == crate::plans::discover::SPEC_SOURCE {
             continue;
         }
         if !super::plan_has_open_task(p, &ctx.workspace.tasks) {
