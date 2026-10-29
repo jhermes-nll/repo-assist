@@ -419,3 +419,33 @@ fn fuzz_lite_never_panics() {
     // Silence the "used" lint for next_usize if a later iteration removed it.
     let _ = next_usize;
 }
+
+/// An unrecognized plan that still has a `# ` heading keeps its title rather than
+/// discarding it when it falls through to the unknown-format branch.
+#[test]
+fn unknown_format_preserves_plan_title() {
+    let text = "# Weekly Notes\n\nSome prose only.\n- a bullet\n";
+    let plan = parse_plan(text);
+    assert_eq!(plan.task_count(), 0);
+    assert!(!plan.warnings.is_empty());
+    assert_eq!(plan.title, "Weekly Notes");
+}
+
+/// A line that is not a recognized path directive does not contribute paths, and
+/// an unknown directive is not misparsed as a path. Only known directives are.
+#[test]
+fn unknown_directive_does_not_add_paths() {
+    let text = concat!(
+        "### Task 1: edits\n",
+        "Create: `src/a.rs`\n",
+        "Scribble: `src/b.rs`\n",
+        "Update: `src/c.rs`\n"
+    );
+    let plan = parse_plan(text);
+    assert_eq!(plan.tasks.len(), 1);
+    // `Update` is recognized; `Scribble` is not.
+    assert_eq!(
+        plan.tasks[0].expected_paths,
+        vec!["src/a.rs".to_string(), "src/c.rs".to_string()]
+    );
+}

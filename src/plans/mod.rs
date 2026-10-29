@@ -135,14 +135,23 @@ pub fn parse_plan(text: &str) -> ParsedPlan {
         return cl;
     }
     // 3. Unknown format: zero tasks + a logged/recorded warning.
+    // Preserve a plan title discovered by either parser so an unrecognized
+    // document that still has a `# ` heading does not lose it.
+    let title = if !sp.title.is_empty() {
+        sp.title
+    } else {
+        cl.title
+    };
     let msg = format!(
         "plan parser recognized 0 tasks in {} chars; treating as an unknown plan format",
         text.len()
     );
     tracing::warn!("{msg}");
-    let mut out = ParsedPlan::default();
-    out.warnings.push(msg);
-    out
+    ParsedPlan {
+        title,
+        warnings: vec![msg],
+        ..Default::default()
+    }
 }
 
 /// Parse a plan document **file** from disk (returns zero tasks if unreadable, logging a
