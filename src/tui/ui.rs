@@ -46,37 +46,41 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(tabs, chunks[1]);
 
     // Rows
-    let rows = app.filtered_rows();
-    let selected = app.selected_row();
-    let header = match app.tab {
-        crate::tui::app::Tab::Worktrees => "path | branch | changed",
-        crate::tui::app::Tab::Plans => "title | declared/observed",
-        crate::tui::app::Tab::Findings => "kind/severity | state | summary",
-        crate::tui::app::Tab::Sessions => "id | agent | last_event_ms",
-    };
-    let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(Span::styled(
-        header.to_string(),
-        Style::default().add_modifier(Modifier::BOLD),
-    )))];
-    for r in rows.iter() {
-        let style = if selected.map(|s| std::ptr::eq(s, *r)).unwrap_or(false) {
-            Style::default().fg(Color::Black).bg(Color::White)
-        } else {
-            Style::default()
+    if app.tab == crate::tui::app::Tab::Plans {
+        crate::tui::tabs::plans::draw(frame, app, chunks[2]);
+    } else {
+        let rows = app.filtered_rows();
+        let selected = app.selected_row();
+        let header = match app.tab {
+            crate::tui::app::Tab::Worktrees => "path | branch | changed",
+            crate::tui::app::Tab::Plans => "title | declared/observed",
+            crate::tui::app::Tab::Findings => "kind/severity | state | summary",
+            crate::tui::app::Tab::Sessions => "id | agent | last_event_ms",
         };
-        let text = if r.cells.len() > 1 {
-            r.cells.join(" | ")
-        } else {
-            r.text.clone()
-        };
-        items.push(ListItem::new(Line::from(Span::styled(text, style))));
+        let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(Span::styled(
+            header.to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
+        )))];
+        for r in rows.iter() {
+            let style = if selected.map(|s| std::ptr::eq(s, *r)).unwrap_or(false) {
+                Style::default().fg(Color::Black).bg(Color::White)
+            } else {
+                Style::default()
+            };
+            let text = if r.cells.len() > 1 {
+                r.cells.join(" | ")
+            } else {
+                r.text.clone()
+            };
+            items.push(ListItem::new(Line::from(Span::styled(text, style))));
+        }
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(app.tab.title()),
+        );
+        frame.render_widget(list, chunks[2]);
     }
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(app.tab.title()),
-    );
-    frame.render_widget(list, chunks[2]);
 
     // Filter footer (or detail pane content)
     let mid = if let Some(d) = &app.detail {

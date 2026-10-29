@@ -166,15 +166,28 @@ impl DataSource {
                     .and_then(|v| v.as_str())
                     .unwrap_or("?")
                     .to_string();
-                let declared = p.get("declared_done").and_then(|v| v.as_i64()).unwrap_or(0);
-                let observed = p.get("observed_done").and_then(|v| v.as_i64()).unwrap_or(0);
                 let id = p
                     .get("id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("?")
                     .to_string();
+                let worktree = p
+                    .get("worktree")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let task_count = p.get("task_count").and_then(|v| v.as_i64()).unwrap_or(0);
+                let declared = p.get("declared_done").and_then(|v| v.as_i64()).unwrap_or(0);
+                let observed = p.get("observed_done").and_then(|v| v.as_i64()).unwrap_or(0);
+                let stalled = p.get("stalled").and_then(|v| v.as_bool()).unwrap_or(false);
                 let mut row = Row::with_id(id, t.clone());
-                row.cells = vec![t, format!("{}/{}", declared, observed)];
+                row.cells = vec![
+                    t,
+                    worktree,
+                    format!("{}/{}", declared, task_count),
+                    format!("{}/{}", observed, task_count),
+                    stalled.to_string(),
+                ];
                 prows.push(row);
             }
         }
