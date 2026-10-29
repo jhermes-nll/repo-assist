@@ -91,7 +91,7 @@ Not exposed as RPC (run locally by CLI): `Doctor`.
 | `lib` (unit) | 2 | in-crate unit tests |
 | `null_is_error.rs` | 1 | a NULL `tool_calls.is_error` does not break the findings workspace build |
 | `plans_discover.rs` | 1 | plan file discovery |
-| `plans_parse.rs` | 16 | plan file parsers |
+| `plans_parse.rs` | 18 | plan file parsers |
 | `stale_socket.rs` | 1 | a present-but-unlistened socket is recovered from by auto-spawning a daemon |
 | `store.rs` | 5 | store CRUD |
 | `store_helpers.rs` | 2 | store helpers |
@@ -103,7 +103,7 @@ Not exposed as RPC (run locally by CLI): `Doctor`.
 | `tui.rs` | 18 | four-tab TUI |
 | `views_render.rs` | 11 | view rendering + atomic writes |
 
-The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets` is clean for the files in this cleanup, but still reports two pre-existing `duplicated_attributes` warnings at `src/main.rs:10-11` (outside this cleanup's scope, so `-D warnings` does not exit 0), and `cargo test` = `test result: ok. 124 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out` (per-suite: lib 2, cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, fswatch 2, git_repo 3, git_source 8, null_is_error 1, plans_discover 1, plans_parse 16, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 11; `performance` 0 passed / 1 ignored). Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
+The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 126 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out` (per-suite: lib 2, cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, fswatch 2, git_repo 3, git_source 8, null_is_error 1, plans_discover 1, plans_parse 18, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 11; `performance` 0 passed / 1 ignored), green on 3 consecutive runs. Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
 
 ## Commits on `main`
 
@@ -135,7 +135,7 @@ The three gates are re-verified on this machine for this task: `cargo fmt --chec
 | `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
 | `e41085e` | fix(test): repair tui detail-clears test |
 
-Latest `main` commit: `fa17ffa`. The seven `overnight-*` branches have landed on `main` (101 -> 124 tests).
+Latest `main` commit: `d8844d7` (this doc refresh lands one commit later). The seven `overnight-*` branches plus the two in-flight cezar branches (`cez/148278d7`, `cez/52509991`) have landed on `main` (101 -> 126 tests).
 
 ## Status summary
 
