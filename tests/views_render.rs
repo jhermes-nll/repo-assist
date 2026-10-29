@@ -257,3 +257,17 @@ fn views_snapshot_empty_data() {
     assert_snapshot!(render_plans(&empty, now));
     assert_snapshot!(render_findings(&empty, now));
 }
+
+#[test]
+fn plans_view_shows_unknown_state_verbatim() {
+    let d = ViewData {
+        status: json!({}),
+        plans: json!({"plans": [
+            {"id": "abc123", "title": "Status", "state": "unknown", "declared_done": 0, "task_count": 0}
+        ]}),
+        findings: json!({"findings": []}),
+        sessions: json!({"sessions": []}),
+    };
+    let out = render_plans(&d, 0);
+    assert!(out.contains("abc123  unknown  Status  (0/0)"), "{out}");
+}
