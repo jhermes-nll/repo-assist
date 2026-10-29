@@ -47,10 +47,33 @@ commit plus the proving `path:line` or test. Phase 5 row flagged in its comment 
 
 ## Cezar
 
-`repo-assist/368df232-5381-4f64-9d34-517124f6bb36`, `superpowers_full`, status **running**,
-branch `cez/368df232`, cockpit `http://127.0.0.1:4321/p/repo-assist/tasks/368df232-5381-4f64-9d34-517124f6bb36`.
-Scope: post-merge debt cleanup per `docs/superpowers/plans/2026-10-28-post-merge-debt-cleanup.md`.
+**First attempt `368df232` — CANCELLED.** Two defects, both exposed by re-checking the board
+against cezar:
+
+1. **My plan had zero `- [ ]` checkboxes.** `superpowers_full` gates on a plan containing
+   unchecked tasks; `plangate`/`plandone` failed, so the workflow spent 3 `writeplan`
+   iterations (237k tokens) generating its own plan and stopped at `status: waiting`.
+2. **Its base was pre-merge.** `get_changes` showed `README.md` as *added*,
+   `src/plans/derive.rs` as *added*, `status.md` → `docs/status.md` *renamed* — all already on
+   `main`. Base was ≤ `eb3379e`, so a 66-file diff (+4138/−294) re-adding seven merges. Nothing
+   was published; branch `cez/368df232` never reached origin. Cost $0.69, sunk.
+
+**Second attempt `52509991-33da-410e-a44b-c515ea9439df` — RUNNING.**
+`superpowers_full`, branch `cez/52509991`, queued → running. Plan rewritten with four checkbox
+tasks and pushed as `fa17ffa`; the task text now opens with an explicit base assertion
+(`git fetch origin && git reset --hard origin/main`, then verify `README.md` and the plan file
+exist and `cargo test` reports ≥124, else STOP). Step trace confirms the fix worked:
+`plangate=done planpath=done pick=done impl=running`, with no self-generated plan.
+Cockpit: `http://127.0.0.1:4321/p/repo-assist/tasks/52509991-33da-410e-a44b-c515ea9439df`
+
 `done` is a claim — review `get_changes` before merging.
+
+## Board vs cezar: the gap
+
+The board's 8 `Done` rows now match reality, but the board is blind to cezar's non-spec work:
+two **failed** runs (`357dc855` maintenance smoke, `6e250bd3` wip draft PRs) and one blocked
+run had zero board presence. That is correct for Path A (no card for direct handoffs) but means
+failures are only visible in the cockpit.
 
 ## Gotchas recorded
 
