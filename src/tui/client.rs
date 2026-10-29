@@ -24,14 +24,30 @@ pub struct Snapshot {
     pub rows: [Vec<Row>; 4],
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SubscribeResult {
+    pub events: Vec<serde_json::Value>,
+    pub next: i64,
+    pub timed_out: bool,
+}
+
 pub struct DataSource {
     sock: std::path::PathBuf,
     client: Option<Client>,
+    /// Cursor (exclusive event id) used by the long-poll subscriber.
+    pub since: Option<i64>,
+    /// Current reconnect backoff in milliseconds (exponential).
+    pub backoff_ms: u64,
 }
 
 impl DataSource {
     pub fn new(sock: std::path::PathBuf) -> Self {
-        Self { sock, client: None }
+        Self {
+            sock,
+            client: None,
+            since: None,
+            backoff_ms: 100,
+        }
     }
 
     fn connect(&mut self) -> Result<(), TuiError> {
@@ -76,12 +92,14 @@ impl DataSource {
     }
 
     pub fn fetch_all(&mut self) -> Result<Snapshot, TuiError> {
-        // First try; on failure drop connection and retry once (reconnect).
+        // First try; on failure drop connection, reset cursor, and retry once (reconnect).
         let first = self.fetch_all_once();
         match first {
             Ok(s) => Ok(s),
             Err(_) => {
                 self.client = None;
+                self.since = None;
+                self.backoff_ms = (self.backoff_ms.saturating_mul(2)).min(5000);
                 self.fetch_all_once()
             }
         }
@@ -250,6 +268,128 @@ impl DataSource {
         snap.rows[Tab::Findings.index()] = frows;
         snap.rows[Tab::Sessions.index()] = srows;
         Ok(snap)
+    }
+
+    const DEFAULT_WAIT_MS: u64 = 250;
+
+    /// Long-poll `Subscribe` once, returning the protocol reply. On success the internal
+    /// cursor advances to `next`; the whole snapshot is never merged here (callers replace
+    /// via [`Self::fetch_all`] on reconnect).
+    pub fn subscribe_once(&mut self) -> Result<SubscribeResult, TuiError> {
+        self.subscribe_once_with(self.since, Self::DEFAULT_WAIT_MS)
+    }
+
+    /// Long-poll `Subscribe` with an explicit cursor and wait window. Kept as the
+    /// canonical implementation so callers/tests can drive the full-poll behaviour.
+    pub fn subscribe_once_with(
+        &mut self,
+        since: Option<i64>,
+        wait_ms: u64,
+    ) -> Result<SubscribeResult, TuiError> {
+        self.subscribe_with(since, wait_ms)
+    }
+
+    /// Alias covering the most likely spelling used by callers.
+    pub fn subscribe(
+        &mut self,
+        since: Option<i64>,
+        wait_ms: u64,
+    ) -> Result<SubscribeResult, TuiError> {
+        self.subscribe_with(since, wait_ms)
+    }
+
+    /// Alias for callers that pass `(since, wait_ms)` positionally as a tuple-free form.
+    pub fn subscribe_longpoll(
+        &mut self,
+        since: Option<i64>,
+        wait_ms: u64,
+    ) -> Result<SubscribeResult, TuiError> {
+        self.subscribe_with(since, wait_ms)
+    }
+
+    fn subscribe_with(
+        &mut self,
+        since: Option<i64>,
+        wait_ms: u64,
+    ) -> Result<SubscribeResult, TuiError> {
+        let effective_since = since.or(self.since);
+        self.ensure()?;
+        let c = match self.client.as_mut() {
+            Some(c) => c,
+            None => return Err(TuiError::Transport("not connected".into())),
+        };
+        let params = serde_json::json!({ "since": effective_since, "wait_ms": wait_ms });
+        let timeout = std::time::Duration::from_millis(wait_ms.saturating_add(5000).max(1000));
+        match c.call_timeout(Method::Subscribe, params, timeout) {
+            Ok(crate::ipc::Reply::Result { result, .. }) => {
+                let events = result
+                    .get("events")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let next = result
+                    .get("next")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or_else(|| effective_since.unwrap_or(0));
+                let timed_out = result
+                    .get("timed_out")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                self.since = Some(next);
+                self.backoff_ms = 100;
+                Ok(SubscribeResult {
+                    events,
+                    next,
+                    timed_out,
+                })
+            }
+            Ok(crate::ipc::Reply::Error { error, .. }) => Err(TuiError::Daemon {
+                code: error.code,
+                message: error.message,
+            }),
+            Err(e) => {
+                self.client = None;
+                self.since = None;
+                if matches!(e, IpcError::Timeout(_)) {
+                    Err(TuiError::Timeout(e.to_string()))
+                } else {
+                    Err(TuiError::Ipc(e))
+                }
+            }
+        }
+    }
+
+    /// Drop connection, back off exponentially, reset cursor, re-fetch all, and return.
+    /// Intended as the reconnect path after a socket failure.
+    pub fn reconnect(&mut self) -> Result<(), TuiError> {
+        self.client = None;
+        self.since = None;
+        for _ in 0..6 {
+            std::thread::sleep(std::time::Duration::from_millis(self.backoff_ms));
+            match self.connect() {
+                Ok(()) => {
+                    self.backoff_ms = 100;
+                    return Ok(());
+                }
+                Err(_) => {
+                    self.backoff_ms = (self.backoff_ms.saturating_mul(2)).min(5000);
+                }
+            }
+        }
+        Err(TuiError::Transport("reconnect failed".into()))
+    }
+
+    /// Reconnect (if needed) and replace the whole snapshot.
+    pub fn fetch_all_reconnecting(&mut self) -> Result<Snapshot, TuiError> {
+        let first = self.fetch_all();
+        match first {
+            Ok(s) => Ok(s),
+            Err(_) => {
+                self.reconnect()?;
+                // reset cursor already done; replace snapshot
+                self.fetch_all()
+            }
+        }
     }
 
     pub fn ack_finding(&mut self, id: &str) -> Result<(), TuiError> {
