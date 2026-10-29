@@ -409,6 +409,8 @@ fn matches_seq(p: &[char], t: &[char]) -> bool {
             }
             // Allow `**/` to match zero path segments, so that globs such as
             // `docs/**/*.md` also match files directly under `docs/`.
+            // `**/` matches zero or more directories (standard globstar); this
+            // applies to every glob, not just spec globs.
             if p.len() >= 3 && p[2] == '/' && matches_seq(&p[3..], t) {
                 return true;
             }
@@ -430,4 +432,56 @@ fn matches_seq(p: &[char], t: &[char]) -> bool {
         return matches_seq(&p[1..], &t[1..]);
     }
     false
+}
+
+#[cfg(test)]
+mod glob_match_tests {
+    use super::glob_match;
+
+    #[test]
+    fn globstar_matches_zero_segments() {
+        assert!(glob_match("docs/**/*.md", "docs/notes.md"));
+    }
+
+    #[test]
+    fn globstar_matches_one_and_many_segments() {
+        assert!(glob_match("docs/**/*.md", "docs/a/notes.md"));
+        assert!(glob_match("docs/**/*.md", "docs/a/b/notes.md"));
+    }
+
+    #[test]
+    fn globstar_does_not_overmatch() {
+        assert!(!glob_match("docs/**/*.md", "docsx/notes.md"));
+        assert!(!glob_match("docs/**/*.md", "docs/notes.txt"));
+        assert!(!glob_match("docs/**/*.md", "notdocs/notes.md"));
+    }
+
+    #[test]
+    fn single_star_does_not_cross_slash() {
+        assert!(glob_match(
+            "docs/superpowers/plans/*.md",
+            "docs/superpowers/plans/x.md"
+        ));
+        assert!(!glob_match(
+            "docs/superpowers/plans/*.md",
+            "docs/superpowers/plans/sub/x.md"
+        ));
+    }
+
+    #[test]
+    fn exact_pattern_matches_only_itself() {
+        assert!(glob_match("TODO.md", "TODO.md"));
+        assert!(!glob_match("TODO.md", "TODO.txt"));
+        assert!(!glob_match("TODO.md", "a/TODO.md"));
+    }
+
+    #[test]
+    fn checklist_docs_plans_matches_direct_file_deliberate_widening() {
+        // Deliberate, documented widening: `**/` matches zero directories, so
+        // `docs/plans/**/*.md` now also matches files directly under
+        // `docs/plans/` (e.g. `docs/plans/roadmap.md`), which are indexed as
+        // source="checklist". This is intentional, not an accident.
+        assert!(glob_match("docs/plans/**/*.md", "docs/plans/roadmap.md"));
+        assert!(glob_match("docs/plans/**/*.md", "docs/plans/sub/x.md"));
+    }
 }
