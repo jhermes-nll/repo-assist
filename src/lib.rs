@@ -3,6 +3,13 @@
 //!
 //! The `ra` binary (see [`crate::cli`]) is a thin shell over these modules so integration
 //! tests can drive them directly.
+//!
+//! Spec (DoD #1, workorder 20261022-20): forbid unwrap/expect in non-test source so
+//! spec-fidelity issues surface as compile errors (clippy `-D warnings`), never as
+//! runtime panics.
+
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 
 pub mod checks;
 pub mod cli;
