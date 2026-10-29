@@ -8,11 +8,11 @@ Local, advisory, always-on daemon (`ra`) that watches a git repository across al
 
 ## Architecture
 
-    fs watcher (notify) -> git source (changed-file sets) -> SQLite (WAL, user_version 2)
+    fs watcher (notify) -> git source (changed-file sets) -> SQLite (WAL, user_version 3)
                                                     -> ipc socket (Unix domain)
                                                     -> plan CLI
 
-- **Store** (`src/store/`): SQLite, WAL journaling, `PRAGMA user_version = 2`. Auto-migrates on `Store::open`.
+- **Store** (`src/store/`): SQLite, WAL journaling, `PRAGMA user_version = 3`. Auto-migrates on `Store::open`.
 - **Sources** (`src/sources/`): `fswatch` (fs notify) + `git` (worktree discovery, changed-file sets, conflict/merge detection).
 - **IPC** (`src/ipc/`): Unix-domain socket; a foreground daemon binds one socket per repo; client commands connect (auto-spawning a detached daemon on first use).
 - **Daemon** (`src/daemon/`): `run_foreground`, `spawn_detached`, socket + pidfile locking.

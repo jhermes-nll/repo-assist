@@ -321,7 +321,7 @@ pub fn sync_sessions(store: &Store, repo_root: &Path, sessions_root: &Path) {
             byte_offset: size,
             parse_errors: ing.parse_errors,
         };
-        let calls: Vec<crate::store::ToolCallRow<'_>> = ing
+        let all_calls: Vec<crate::store::ToolCallRow<'_>> = ing
             .calls
             .iter()
             .map(|c| crate::store::ToolCallRow {
@@ -332,7 +332,12 @@ pub fn sync_sessions(store: &Store, repo_root: &Path, sessions_root: &Path) {
                 result_hash: c.result_hash.as_deref(),
             })
             .collect();
-        if let Err(e) = store.upsert_session_with_calls(&row, &calls) {
+        // Retention ring: persist only the newest TOOL_CALL_RING_SIZE calls.
+        let start = all_calls
+            .len()
+            .saturating_sub(crate::store::TOOL_CALL_RING_SIZE);
+        let calls = &all_calls[start..];
+        if let Err(e) = store.upsert_session_with_calls(&row, calls) {
             eprintln!("sessions sync: store write failed for {file_s}: {e}");
         }
     }
