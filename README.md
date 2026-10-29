@@ -54,6 +54,8 @@ enabled = true
 debounce_ms = 1000
 ```
 
+**Specs.** Files under `docs/**/*.md` are tracked in the same plans list with `source = "spec"` (visible in JSON; `ra plans` has no source column). Parsing and the `done`/`active` rule are identical to plans. A spec with no parseable tasks or checkboxes is listed with state `unknown` ("present but not machine-readable"), and `unknown` specs are never counted active or stalled and never fire findings. Files already claimed by a plan adapter, and anything under `artifacts/`, are not indexed as specs. Specs are always scanned — there is no config key for them (the two existing plan glob keys are also not yet consumed by the daemon).
+
 pi session root resolution: `$PI_CODING_AGENT_SESSION_DIR` if set; else `${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions`; `sources.pi.sessions_dir` overrides when non-empty.
 
 ## Operational commands
