@@ -6,7 +6,7 @@ For example this plan's `Task 2.3` is "Findings engine", but the implemented rep
 `Task 2.3` is "worktree event bus (watcher -> store -> status)". The implementer
 restructured as it went.
 
-Therefore, for "what actually landed", `status.md` in the repo root is the
+Therefore, for "what actually landed", `docs/status.md` is the
 authority, NOT this document.
 
 Known deliberate divergences from this document:

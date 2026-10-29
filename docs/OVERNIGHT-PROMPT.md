@@ -45,7 +45,7 @@ Plus **RPC methods** that currently fall through to `not_implemented` in `src/ip
 
 ## Read these first, in this order
 
-1. **`status.md`** (repo root) — **THE AUTHORITY on what actually exists.** Note: the upstream plan's task *numbering* does NOT match what was built (its `Task 2.3` is "Findings engine"; this repo's `Task 2.3` is "worktree event bus"). Trust `status.md` and the code, not the plan's numbers.
+1. **`docs/status.md`** — **THE AUTHORITY on what actually exists.** Note: the upstream plan's task *numbering* does NOT match what was built (its `Task 2.3` is "Findings engine"; this repo's `Task 2.3` is "worktree event bus"). Trust `docs/status.md` and the code, not the plan's numbers.
 2. **`docs/2026-10-19-repo-assist-implementation-plan.md`** — the upstream plan. **§7 (CLI), §9 (Findings catalog), §5 (data model), §6 (IPC), §10 (config)** are your spec for the remaining work. Read §9 carefully — it is a precise, table-driven spec with rules, severities, and dedupe keys.
 3. **`docs/ra.1.md`** — the man page. It already documents all these commands, so it tells you the intended surface.
 4. **`docs/verified-facts.md`** — verified vs unverified assumptions. Note it was written on a *different machine* (Linux/aarch64, cargo 1.97.1); its environment claims do not apply here.
@@ -180,7 +180,7 @@ cargo fmt --check / clippy / cargo test: <real output, real counts>
 
 1. `cd /Users/jesse/Developer/repos/repo-assist && git log --oneline -5 && git status`
 2. Confirm the baseline: `cargo test` (expect 44 passed).
-3. Read `status.md`, then the plan's §7 and §9.
+3. Read `docs/status.md`, then the plan's §7 and §9.
 4. Read `src/sources/sessions.rs` + `src/ipc/server.rs` (`sessions_json`) + `src/cli.rs` (`run_sessions`) — that vertical slice is your template.
 5. Read `docs/superpowers/plans/artifacts/review-task-4-sessions.md` — it shows what reviewers catch here.
 6. Begin the findings engine.
