@@ -100,11 +100,58 @@ impl PlanAdapter for ChecklistAdapter {
     }
 }
 
+/// `plans.source` value for spec/design documents.
+pub const SPEC_SOURCE: &str = "spec";
+
+/// Spec adapter: default glob `docs/**/*.md`. Same task/declared-state rules as plans
+/// (superpowers headings first, then checklist boxes); a spec with zero tasks is stored
+/// `unknown` by `sync_plans`. Uses the silent parsers, not `parse_plan`.
+#[derive(Clone, Debug)]
+pub struct SpecAdapter {
+    pub globs: Vec<String>,
+}
+
+impl Default for SpecAdapter {
+    fn default() -> Self {
+        Self {
+            globs: vec!["docs/**/*.md".to_string()],
+        }
+    }
+}
+
+impl PlanAdapter for SpecAdapter {
+    fn name(&self) -> &str {
+        SPEC_SOURCE
+    }
+    fn globs(&self) -> &[String] {
+        &self.globs
+    }
+    fn parse(&self, text: &str) -> ParsedPlan {
+        let sp = crate::plans::superpowers::parse(text);
+        if !sp.tasks.is_empty() {
+            return sp;
+        }
+        let cl = crate::plans::checklist::parse(text);
+        if !cl.tasks.is_empty() {
+            return cl;
+        }
+        ParsedPlan {
+            title: if sp.title.is_empty() {
+                cl.title
+            } else {
+                sp.title
+            },
+            ..Default::default()
+        }
+    }
+}
+
 /// Convenience: the default adapter set.
 pub fn default_adapters() -> Vec<Box<dyn PlanAdapter>> {
     vec![
         Box::new(SuperpowersAdapter::default()),
         Box::new(ChecklistAdapter::default()),
+        Box::new(SpecAdapter::default()),
     ]
 }
 
@@ -151,6 +198,8 @@ where
 
     let mut present: HashSet<String> = HashSet::new();
     let mut processed: Vec<(String, String, crate::plans::ParsedPlan)> = Vec::new();
+    // Relative paths already claimed by a non-spec adapter in this scan (claimed-path dedupe).
+    let mut claimed: HashSet<String> = HashSet::new();
 
     let now = git::now_ms();
 
@@ -158,14 +207,24 @@ where
         let adapter = &adapter;
         for glob in adapter.globs() {
             for file in discover_files(wt_path, glob) {
-                let Ok(text) = fs::read_to_string(&file) else {
-                    continue;
-                };
-                let parsed = adapter.parse(&text);
                 let rel = match file.strip_prefix(wt_path) {
                     Ok(r) => r.to_string_lossy().replace('\\', "/"),
                     Err(_) => continue,
                 };
+                // Spec-only skips: claimed-path dedupe (non-spec adapters run first)
+                // and the /artifacts/ segment that no plan glob claims.
+                if adapter.name() == SPEC_SOURCE {
+                    if claimed.contains(&rel) {
+                        continue;
+                    }
+                    if rel.contains("/artifacts/") {
+                        continue;
+                    }
+                }
+                let Ok(text) = fs::read_to_string(&file) else {
+                    continue;
+                };
+                let parsed = adapter.parse(&text);
                 let id = derive::plan_id(adapter.name(), &wt_path_str, &rel);
                 let title = if parsed.title.trim().is_empty() {
                     file.file_stem()
@@ -178,6 +237,8 @@ where
                 let declared_state = parsed.declared_state();
                 let state = if declared_state == "done" {
                     "done"
+                } else if adapter.name() == SPEC_SOURCE && parsed.tasks.is_empty() {
+                    "unknown"
                 } else {
                     "active"
                 };
@@ -202,6 +263,9 @@ where
                     let _ = ordinal;
                 }
 
+                if adapter.name() != SPEC_SOURCE {
+                    claimed.insert(rel.clone());
+                }
                 present.insert(id.clone());
                 processed.push((id, rel, parsed));
             }
@@ -341,6 +405,11 @@ fn matches_seq(p: &[char], t: &[char]) -> bool {
     if p[0] == '*' {
         if p.len() >= 2 && p[1] == '*' {
             if matches_seq(&p[2..], t) {
+                return true;
+            }
+            // Allow `**/` to match zero path segments, so that globs such as
+            // `docs/**/*.md` also match files directly under `docs/`.
+            if p.len() >= 3 && p[2] == '/' && matches_seq(&p[3..], t) {
                 return true;
             }
             if !t.is_empty() {
