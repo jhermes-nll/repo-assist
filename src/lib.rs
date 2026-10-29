@@ -1,3 +1,4 @@
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 //! repo-assist library surface.
 //!
 //! The `ra` binary (see [`crate::cli`]) is a thin shell over these modules so integration

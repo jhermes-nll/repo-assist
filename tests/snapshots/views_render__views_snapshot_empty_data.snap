@@ -1,0 +1,10 @@
+---
+source: tests/views_render.rs
+expression: "render_status(&empty, now)"
+---
+generated_at: 2023-11-14T22:13:20Z
+daemon: 0.1.0
+This file is auto-generated and read-only; it may be stale.
+# Status
+
+worktrees: 0  active_plans: 0  open_findings: 0  sessions: 0

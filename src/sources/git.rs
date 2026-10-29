@@ -6,6 +6,7 @@
 //! changed-file set (`worktree_files`: committed | staged | unstaged | untracked), and marks
 //! vanished worktrees not present.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -177,6 +178,47 @@ fn replace_files(
 }
 
 /// Sync worktrees + changed-file sets into the store (Task 2.1 entry point).
+/// The commit history of one worktree (Section 9): `sha` -> the set of paths each commit
+/// introduced, for commits in `merge_base..HEAD` on the plan branch.
+///
+/// Returns an empty map when git returns nothing (the worktree is at the base ref).
+pub fn plan_commit_history(wt: &Path, base_ref: Option<&str>) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let Some(base) = base_ref else {
+        return out;
+    };
+    // Reverse the log so an earlier commit is listed first; newest wins on collision.
+    let Some(data) = git_ro(
+        wt,
+        &[
+            "log",
+            "--no-merges",
+            "--reverse",
+            "--format=%H",
+            "--name-only",
+            &format!("{base}...HEAD"),
+        ],
+    ) else {
+        return out;
+    };
+    let mut active: Option<String> = None;
+    for line in data.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // A line that parses as a 40-char hex SHA starts a new commit (git
+        // `--format=%H` emits lowercase hex; anything else is a path line).
+        if line.len() == 40 && line.chars().all(|c| c.is_ascii_hexdigit()) {
+            active = Some(line.to_string());
+            out.entry(line.to_string()).or_default();
+        } else if let Some(sha) = active.as_ref() {
+            out.entry(sha.clone()).or_default().push(line.to_string());
+        }
+    }
+    out
+}
+
 pub fn sync_worktrees(store: &Store, repo_root: &Path) -> Result<(), crate::store::StoreError> {
     let wts = discover_worktrees(repo_root);
     let base_ref = detect_base_ref(repo_root);
@@ -341,6 +383,78 @@ pub fn changed_file_set(
                 _ => {}
             }
         }
+    }
+    out
+}
+
+/// One commit on a branch (Section 9): sha, unix-millis timestamp, and the files it touched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitTouch {
+    pub sha: String,
+    pub ts_ms: i64,
+    pub files: Vec<String>,
+}
+
+/// The oldest commit that touched `rel_path` in the repo at `repo_root` (Section 9).
+///
+/// Returns `git log --reverse --format=%H -- <rel_path>`'s first line (the oldest commit
+/// SHA), or `None` when git reports nothing. Path is relative to the repo root.
+pub fn first_commit_for_path(repo_root: &Path, rel_path: &str) -> Option<String> {
+    let out = git_ro(
+        repo_root,
+        &["log", "--reverse", "--format=%H", "--", rel_path],
+    )?;
+    out.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+/// Commits on `head_ref` not reachable from `base_ref` (Section 9): `base..head`, newest
+/// first, each carrying its TOUCHED FILES.
+///
+/// Format: `git log <base>..<head> --name-only --format=__COMMIT__%H%x00%ct`; a line
+/// beginning with `__COMMIT__` starts a new commit; subsequent non-empty lines are paths.
+/// Returns an empty vector on git failure or an empty range.
+pub fn commits_between(repo_root: &Path, base_ref: &str, head_ref: &str) -> Vec<CommitTouch> {
+    let arg = format!("{base_ref}..{head_ref}");
+    let Some(data) = git_ro(
+        repo_root,
+        &["log", &arg, "--name-only", "--format=__COMMIT__%H%x00%ct"],
+    ) else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<CommitTouch> = Vec::new();
+    let mut current: Option<CommitTouch> = None;
+    for line in data.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("__COMMIT__") {
+            if let Some(c) = current.take() {
+                out.push(c);
+            }
+            // rest = "<sha>\x00<ct>"
+            let mut parts = rest.split('\u{0}');
+            let sha = parts.next().unwrap_or("").trim().to_string();
+            let ts: i64 = parts
+                .next()
+                .and_then(|s| s.trim().parse::<i64>().ok())
+                .unwrap_or(0)
+                * 1000;
+            current = Some(CommitTouch {
+                sha,
+                ts_ms: ts,
+                files: Vec::new(),
+            });
+        } else if let Some(c) = current.as_mut() {
+            let p = line.trim();
+            if !p.is_empty() {
+                c.files.push(p.to_string());
+            }
+        }
+    }
+    if let Some(c) = current.take() {
+        out.push(c);
     }
     out
 }

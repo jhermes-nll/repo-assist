@@ -16,7 +16,14 @@ use std::path::Path;
 use crate::store::TaskRow;
 
 pub mod checklist;
+pub mod derive;
+pub mod discover;
 pub mod superpowers;
+
+pub use derive::{
+    derive, derive_observed, plan_id, run_truth_table, DeriveCase, DeriveInput, EvidenceSeed,
+    Observed, ObservedOutcome,
+};
 
 /// A single parsed task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,4 +202,10 @@ pub(crate) fn parse_checkbox(line: &str) -> Option<bool> {
     }
     // Empty / unknown single-char markers are unchecked; only x/X is checked.
     Some(matches!(marker, "x" | "X"))
+}
+
+/// Every default plan glob across registered adapters (used by the daemon to decide
+/// whether a `worktree_dirty` event needs plan discovery).
+pub fn plan_globs() -> Vec<String> {
+    crate::plans::discover::plan_globs()
 }

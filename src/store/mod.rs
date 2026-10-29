@@ -348,6 +348,38 @@ impl Store {
             Ok(conn.last_insert_rowid())
         })
     }
+
+    /// Set a task's `observed` (and `observed_reason`) value. Single-writer transaction.
+    ///
+    /// Owns the `tasks.observed` / `tasks.observed_reason` columns — callers that recompute
+    /// drift should use this rather than poking at the row directly.
+    pub fn set_task_observed(
+        &self,
+        task_id: &str,
+        observed: &str,
+        reason: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "UPDATE tasks SET observed = ?2, observed_reason = ?3 WHERE id = ?1",
+                rusqlite::params![task_id, observed, reason],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Remove evidence rows for `task_id` of the given `kind`, keeping all other kinds.
+    /// Single-writer transaction. Used before re-appending derived commit evidence so re-sync
+    /// does not accumulate duplicates.
+    pub fn clear_evidence(&self, task_id: &str, kind: &str) -> Result<(), StoreError> {
+        self.write(|conn| {
+            conn.execute(
+                "DELETE FROM evidence WHERE task_id = ?1 AND kind = ?2",
+                rusqlite::params![task_id, kind],
+            )?;
+            Ok(())
+        })
+    }
     /// Upsert one `sessions` row and REPLACE its `tool_calls` rows.
     ///
     /// All statements run inside a single `unchecked_transaction` on the writer
@@ -459,6 +491,19 @@ impl Store {
                 .map(|(path, origin)| DriftFile { path, origin })
                 .collect();
             Ok(Some(drift))
+        })
+    }
+
+    /// Every known worktree as `(id, path)`. Plan discovery scans these (not only worktrees
+    /// that already own a plan), otherwise the first plan could never be discovered.
+    pub fn worktree_id_paths(&self) -> Result<Vec<(i64, String)>, StoreError> {
+        self.read(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT id, path FROM worktrees WHERE present = 1 ORDER BY id")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
         })
     }
 
