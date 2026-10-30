@@ -262,12 +262,11 @@ where
                 };
                 store.upsert_plan(&row, now)?;
 
-                for (ordinal, task) in parsed.tasks.iter().enumerate() {
+                for task in parsed.tasks.iter() {
                     let mut t = task.clone();
                     t.set_plan_id(&id);
                     let row = t.to_task_row();
                     store.upsert_task(&row)?;
-                    let _ = ordinal;
                 }
 
                 if adapter.name() != SPEC_SOURCE {

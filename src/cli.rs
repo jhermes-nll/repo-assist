@@ -448,11 +448,11 @@ fn print_doctor(checks: &[crate::doctor::Check], json: bool) -> Result<(), anyho
 }
 
 fn print_plans_human(s: &serde_json::Value) {
-    println!("{:<12}  {:<12}  {:<7}  TITLE", "PLAN", "SOURCE", "STATE");
+    println!("{:<16}  {:<12}  {:<7}  TITLE", "PLAN", "SOURCE", "STATE");
     if let Some(list) = s.get("plans").and_then(|v| v.as_array()) {
         for p in list {
             println!(
-                "{:<12}  {:<12}  {:<7}  {}  ({} task(s), {} done)",
+                "{:<16}  {:<12}  {:<7}  {}  ({} task(s), {} done)",
                 p.get("id").and_then(Value::as_str).unwrap_or("?"),
                 p.get("source").and_then(Value::as_str).unwrap_or("-"),
                 p.get("state").and_then(Value::as_str).unwrap_or("-"),
