@@ -87,41 +87,32 @@ the toolResult message.content)`. Both derive cleanly from these shapes.
 
 ---
 
-## Item 2 — Real superpowers plan markup (verified ❌ — not present on this machine)
+## Item 2 — Real superpowers plan markup (resolved ✅ — real plans now exist)
 
-No `docs/superpowers/plans/*.md`, no `TODO.md`, no `PLAN.md`, and no `docs/superpowers/` directory
-exist anywhere under `/home/jesse` (excluding `node_modules` and `.git`). Real plan files were
-**not captured** because there are none here.
+When first checked (2026-10-18) no superpowers plans existed on this machine, so the representative
+sample in the implementation plan (Task 3.1) was used as the spec. That premise is stale: this repo
+now carries real superpowers plans under `docs/superpowers/plans/*.md`, and the parsers
+(`src/plans/superpowers.rs`, `src/plans/checklist.rs`) are covered by `tests/plans_parse.rs` using
+`tests/fixtures/plans/` (`representative-superpowers-plan.md`, `todo.md`, `unknown-format.md`).
 
-Action taken instead: the representative sample from the plan itself (Task 3.1) is treated as the
-authoritative spec for the superpowers parser, plus the checklist parser's default globs. The
-parser MUST be robust: unknown/other framework files yield a plan with zero tasks + a logged
-warning (never a panic), and malformed files never panic (property/fuzz-lite test required per the
-plan).
-
-Tuning targets from the sample (must hold once implemented):
+Behaviour implemented and tested:
 - task heading matches `^#{2,4}\s+Task\s+\d+` (sample uses `### Task 1:`);
 - `Create:`/`Modify:`/`Test:` lines → `expected_paths`, stripping `:line`/`:line-line` and `(…)`;
-- declared state = task `done` only if every checkbox is `[x]` and ≥1 exists; else `open`.
+- declared state = task `done` only if every checkbox is `[x]` and ≥1 exists; else `open`;
+- unknown formats yield a plan with zero tasks and a logged warning; malformed files never panic.
 
 ---
 
-## Item 3 — pi session `cwd` == worktree path (verified ❌ from real data)
+## Item 3 — pi session `cwd` == worktree path (verified: invariant does not hold; handled ✅)
 
-The 3 captured sessions all have `"cwd":"/home/jesse"`. The git repos present on this machine are
-under `~/dev/` (`/home/jesse/dev/subtext`, `…/website`, `…/BBL_SHO`, …). `/home/jesse` (where
-sessions point) is **not** any worktree's toplevel, and is not even a git repo.
+The 3 captured sessions all have `"cwd":"/home/jesse"`, which is not any worktree's toplevel (and not
+a git repo), so "session cwd equals a worktree path" does **not** hold for real data.
 
-Conclusion: the "session cwd equals a worktree path" invariant does **not** hold for the
-captured data — a session's cwd need not be contained by any discovered worktree. The tree-mapping
-step (`worktree_path` is equal to or a prefix of canonicalized cwd) still works correctly: it
-simply yields *no* match for these sessions, which is the correct, honest behaviour (a session is
-not force-joined to a worktree it doesn't belong to).
-
-Action: the real subtext repo was **not** scaffolded (no `~/dev/subtext` exists on this
-machine). The card's "see below" pointer is therefore a dead reference; it has been removed
-and the item left in its verified-❌ state. Test fixtures that *do* drive the daemon use
-synthetic repos built in `tests/common.rs` (`GitRepo::new()`), not a subtext clone.
+This is handled by design, not an open failure: the mapping step (`worktree_path` equal to or a
+prefix of the canonicalized cwd) yields no match for such sessions, and they are stored with
+`worktree_id = NULL` rather than force-joined to a worktree (`tests/task_4.rs`, worktree-mapping
+tests; see "Ingest model" in `docs/status.md`). Test fixtures that drive the daemon use synthetic
+repos built in `tests/common`, not a subtext clone.
 
 ---
 
@@ -137,15 +128,14 @@ So the `worktree.merge_conflict` check can be enabled and `ra doctor` should ass
 
 ---
 
-## Item 5 — Plan checkbox updates committed on the plan's branch (verified ❌ — not checkable)
+## Item 5 — Plan checkbox updates committed on the plan's branch (product question; implemented ✅)
 
-Not checkable from machine state (no real superpowers plans exist). This is a **product/tuning**
-question, not a data fact: whether checkbox updates a plan author marks `[x]` are committed before
-they show up in `git log <merge_base>..HEAD` on the plan branch. Per the plan, we **do not**
-silently suppress this — we tune `plan.checkbox_mismatch` so it reports with `confidence=inferred`
-(informational until an explicit task id is pushed by a future `ra report`), and we let
-`ra plan`/`plan.stalled` show the discrepancy to the human rather than hide it. No code decision is
-locked until real plan data appears.
+Not a data fact: whether checkbox updates a plan author marks `[x]` are committed before they show
+up in `git log <merge_base>..HEAD` on the plan branch. Decision as implemented: we do not silently
+suppress this. `plan.checkbox_mismatch` (`src/checks/plan_checkbox.rs`) reports `declared=open` /
+`observed=committed` and `declared=done` / `observed=not_started` (with `expected_paths` known) at
+severity `warn`, and `ra plan` / `plan.stalled` surface the discrepancy to the human. Revisit the
+evidence confidence (currently `explicit`) if real-world plan data shows noise.
 
 ---
 
