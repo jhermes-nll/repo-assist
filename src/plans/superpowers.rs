@@ -77,6 +77,9 @@ pub fn parse(text: &str) -> ParsedPlan {
             if let Some(paths) = parse_path_decl(trimmed) {
                 cur_paths.extend(paths.into_iter().filter(|p| !p.is_empty()));
             }
+            if let Some(paths) = parse_files_decl(trimmed) {
+                cur_paths.extend(paths.into_iter().filter(|p| !p.is_empty()));
+            }
         }
     }
     if have_task {
@@ -178,6 +181,24 @@ fn parse_path_decl(line: &str) -> Option<Vec<String>> {
     }
 }
 
+/// Parse a `**Files:** ...` (or `Files: ...`) declaration into cleaned paths.
+fn parse_files_decl(line: &str) -> Option<Vec<String>> {
+    let s = line.trim();
+    let lower = s.to_ascii_lowercase();
+    let rest = if let Some(r) = s.strip_prefix("**Files:**") {
+        r
+    } else if let Some(r) = s.strip_prefix("**Files**:") {
+        r
+    } else if let Some(r) = s.strip_prefix("Files:") {
+        r
+    } else if lower.starts_with("files:") {
+        &s[6..]
+    } else {
+        return None;
+    };
+    extract_backticked(rest)
+}
+
 /// Extract every `` `...` `` span from `s`, cleaning each. Returns `None` when there is no
 /// backticked content at all (so the caller can distinguish "no directive" from "directive
 /// with no path" — both collapse to no paths here).
@@ -209,12 +230,22 @@ fn extract_backticked(s: &str) -> Option<Vec<String>> {
 /// Clean a single backticked path: strip a trailing `(notes)` note and a trailing `:line` /
 /// `:line-line` range. Returns `None` when nothing meaningful remains.
 fn clean_path(inner: &str) -> Option<String> {
-    let mut p = inner.trim();
+    let inner = inner.trim();
+    if inner.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let mut p = inner;
 
     // Drop a trailing parenthetical note, e.g. "src/foo.rs (add caching)".
     if let Some(b) = p.find('(') {
         p = &p[..b];
     }
+    // After dropping the note the remaining path must have no spaces.
+    let p = p.trim();
+    if p.contains(' ') {
+        return None;
+    }
+    let mut p = p;
 
     // Drop a trailing ":12" or ":12-34" line-range suffix.
     if let Some(colon) = p.rfind(':') {
@@ -226,10 +257,13 @@ fn clean_path(inner: &str) -> Option<String> {
 
     let p = p.trim();
     if p.is_empty() {
-        None
-    } else {
-        Some(p.to_string())
+        return None;
     }
+    // accept only path-like tokens
+    if !p.contains('/') && !p.rsplit('.').next().map(|e| e.len() > 0 && e.chars().all(|c| c.is_ascii_alphanumeric())).unwrap_or(false) {
+        return None;
+    }
+    Some(p.to_string())
 }
 
 /// Whether `s` is a `NN` or `NN-MM` line range.
