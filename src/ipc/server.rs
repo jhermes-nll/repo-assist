@@ -468,7 +468,7 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
 }
 
 /// Build the `Method::Plans` result: one summary row per plan (Task 2.4).
-fn plans_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
+pub fn plans_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
     store.read(|conn| {
         let mut stmt = conn.prepare(
             "SELECT p.id, p.source, p.title, p.file, p.worktree_id, wt.path, p.state, p.first_seen_ms,              p.last_seen_ms, COALESCE(COUNT(t.id), 0) AS task_count,              COALESCE(SUM(CASE WHEN t.declared = 'done' THEN 1 ELSE 0 END), 0) AS declared_done,              COALESCE(SUM(CASE WHEN t.observed = 'done' THEN 1 ELSE 0 END), 0) AS observed_done              FROM plans p LEFT JOIN worktrees wt ON wt.id = p.worktree_id LEFT JOIN tasks t ON t.plan_id = p.id              GROUP BY p.id ORDER BY p.last_seen_ms DESC",
@@ -496,7 +496,7 @@ fn plans_json(store: &Store, config: &Config) -> Result<Value, crate::store::Sto
             let (id, source, title, file, worktree_id, worktree_path, state, first_seen_ms, last_seen_ms, task_count, declared_done, observed_done) = r?;
             // Stalled flag mirrors check_plan_stalled.
             let mut stalled = false;
-            if hours > 0 && state == "active" {
+            if source != crate::plans::discover::SPEC_SOURCE && hours > 0 && state == "active" {
                 let has_open: i64 = conn
                     .query_row(
                         "SELECT COUNT(*) FROM tasks WHERE plan_id = ?1 AND declared = 'open'",

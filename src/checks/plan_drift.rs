@@ -11,6 +11,9 @@ pub fn check_plan_drift(ctx: &CheckCtx) -> Vec<FindingCandidate> {
     let ws = &ctx.workspace.worktrees;
     let mut out = Vec::new();
     for p in &ctx.workspace.plans {
+        if p.source == crate::plans::discover::SPEC_SOURCE {
+            continue;
+        }
         // Plans with no expected_paths cannot drift; also skip plans without a worktree.
         let total_expected: usize = ctx
             .workspace
