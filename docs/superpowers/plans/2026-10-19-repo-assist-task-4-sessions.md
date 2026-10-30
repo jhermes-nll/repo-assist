@@ -65,7 +65,7 @@
 
 **Interfaces:** none (test-local).
 
-- [ ] **Step 1: Fix both sites** — change each to:
+- [x] **Step 1: Fix both sites** — change each to:
 
 ```rust
 if Command::new("sqlite3").arg("--version").output().is_err() {
@@ -73,13 +73,13 @@ if Command::new("sqlite3").arg("--version").output().is_err() {
 
 Identical semantics (missing sqlite3 → `.output()` errors → skip); this is exactly clippy's `help:` suggestion [E2].
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 Run: `cargo clippy --all-targets -- -D warnings && echo CLIPPY-OK` (CI's exact form [E5]) and `cargo clippy --all-targets --all-features -- -D warnings && echo CLIPPY-ALL-OK`
 Expected: both print OK, exit 0.
 Run: `cargo test --test store`
 Expected: `3 passed` (store suite was green in the baseline run apart from clippy [caller-verified]).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/store.rs
@@ -101,10 +101,10 @@ Verified: clippy exit 0 (both forms); cargo test --test store 3/3."
 
 **Behavior trace the implementer must hold to ([E62]):** after reordering, a failed `try_lock_exclusive()` means the pidfile still contains the **real** holder's pid (contenders no longer clobber it [E10]), so the existing fallback branch (`held != 0 && held != std::process::id()` → `LockError::Busy`) prints "a daemon is already running for this repository (pid N)" on Linux **and** macOS. Deleting the pre-check also removes the only `/proc` dependence in production code [E13] and a latent false-refusal (stale pidfile naming a recycled-live pid with the flock actually free). No code path deletes the pidfile [E61]; takeover semantics are unchanged since the OS releases a dead holder's flock.
 
-- [ ] **Step 1: Confirm the red** — Run: `cargo test --test cli 2>&1 | tail -4`
+- [x] **Step 1: Confirm the red** — Run: `cargo test --test cli 2>&1 | tail -4`
 Expected: FAIL — `second-daemon error should mention the live daemon, got: … could not take the pidfile lock: Resource temporarily unavailable (os error 35)` [E7]. (On CI's OS this test is currently green [E11]; the fix must not regress it.)
 
-- [ ] **Step 2: Rewrite `acquire_lock`** (doc comment on `acquire_lock` updated to describe the new ordering):
+- [x] **Step 2: Rewrite `acquire_lock`** (doc comment on `acquire_lock` updated to describe the new ordering):
 
 ```rust
 pub fn acquire_lock(pid_path: &Path) -> Result<File, LockError> {
@@ -145,7 +145,7 @@ pub fn acquire_lock(pid_path: &Path) -> Result<File, LockError> {
 
 Delete `is_alive` (lines 74-79) [E9, E13] and adjust the module doc: replace "If the recorded PID is dead, the lock is considered stale and taken over." with "A stale lock is released by the OS when its holder dies, so acquiring the flock is the authority on liveness; the pidfile only names the holder for friendly messages."
 
-- [ ] **Step 3: Portable shutdown check in the test.** In `tests/cli.rs`, replace the pidfile-read + `/proc/{pid}` poll block (lines ~113-137) with a socket-removal poll — the accept loop removes the socket at exit (`src/ipc/server.rs:80` [E61]):
+- [x] **Step 3: Portable shutdown check in the test.** In `tests/cli.rs`, replace the pidfile-read + `/proc/{pid}` poll block (lines ~113-137) with a socket-removal poll — the accept loop removes the socket at exit (`src/ipc/server.rs:80` [E61]):
 
 ```rust
 // The daemon exits on its own shortly after the shutdown request; the accept loop
@@ -164,13 +164,13 @@ assert!(gone, "daemon did not shut down (socket still present) after the shutdow
 
 `sock` is already in scope (bound at tests/cli.rs:65-71 [E70]); remove the now-unused pidfile read + `pid` variable.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 Run: `cargo test --test cli`
 Expected: `1 passed` — red→green proof of this task on macOS; the same assertion ("already running") remains the expected text on Linux.
 Run: `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && echo GATES-OK`
 Expected: clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/daemon/lock.rs tests/cli.rs
@@ -193,10 +193,10 @@ Verified: cargo test --test cli 1/1 (was failing on macOS); gates clean."
 
 **Interfaces:** none (test-local). The `events.subject` keys written by the bus are the git-reported worktree path strings [E14, E16, E17]; the product is self-consistent on every platform and is NOT changed — only the test's assumption about path form is.
 
-- [ ] **Step 1: Confirm the red** — Run: `cargo test --test task_2_3 -- --test-threads=1 2>&1 | tail -3`
+- [x] **Step 1: Confirm the red** — Run: `cargo test --test task_2_3 -- --test-threads=1 2>&1 | tail -3`
 Expected: `a_worktree_change_is_persisted_by_the_event_bus` FAILS ("no worktree_dirty event persisted within 8s; view was empty") [E15]. Root cause: `git worktree list --porcelain` reports resolved `/private/var/...` paths for a `$TMPDIR`-created repo while `TempDir` hands out the `/var/folders/...` form [E14, E18]. On CI's OS the strings coincide (tmpdir not symlinked), which is why CI is green [E18].
 
-- [ ] **Step 2: Canonicalize the expected key** (fix pre-verified twice in a scratch copy: 2/2 in 2.84s [E19]):
+- [x] **Step 2: Canonicalize the expected key** (fix pre-verified twice in a scratch copy: 2/2 in 2.84s [E19]):
 
 ```rust
 // git reports worktree paths resolved (e.g. /private/var/... under a macOS TMPDIR
@@ -205,13 +205,13 @@ let wt_a = std::fs::canonicalize(rt.join("wt-a")).unwrap_or_else(|_| rt.join("wt
 let got = wait_dirty(&store, &wt_a, Duration::from_secs(8));
 ```
 
-- [ ] **Step 3: Full baseline gate** (the "baseline is green" checkpoint)
+- [x] **Step 3: Full baseline gate** (the "baseline is green" checkpoint)
 Run: `cargo test`
 Expected: all suites green — 31 passed, 0 failed (29 already-green [caller-verified] + the 2 repaired here).
 Run: `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && echo GATES-OK`
 Expected: clean.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/task_2_3.rs
@@ -284,7 +284,7 @@ impl Drop for SessionsTicker;
 
 #### Sub-task 4.1 — Parser: `ingest_file` over fixtures (TDD)
 
-- [ ] **Step 1: Write the failing tests** in `tests/task_4.rs` (create the file with `mod common;` + helpers; the exact expected numbers below were computed from the committed redacted fixtures [E30–E33, E66] — they are this task's acceptance numbers):
+- [x] **Step 1: Write the failing tests** in `tests/task_4.rs` (create the file with `mod common;` + helpers; the exact expected numbers below were computed from the committed redacted fixtures [E30–E33, E66] — they are this task's acceptance numbers):
 
 ```rust
 //! Task 4 acceptance: the pi session source parses the committed fixtures exactly,
@@ -356,10 +356,10 @@ fn parser_reads_the_redacted_fixtures_exactly() {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — Run: `cargo test --test task_4 2>&1 | tail -5`
+- [x] **Step 2: Run to verify it fails** — Run: `cargo test --test task_4 2>&1 | tail -5`
 Expected: compile error (module `sources::sessions` does not exist) — that is the red state.
 
-- [ ] **Step 3: Implement the parser** — `src/sources/sessions.rs` (module doc comment cites Task 4 / Section 8.2 and states the read-only guarantee [E51, E48]):
+- [x] **Step 3: Implement the parser** — `src/sources/sessions.rs` (module doc comment cites Task 4 / Section 8.2 and states the read-only guarantee [E51, E48]):
 
 ```rust
 //! Agent session source (Task 4 / Section 8.2): parse pi session JSONL files into
@@ -556,12 +556,12 @@ fn parse_file_lines(complete: &str) -> Option<Ingested> {
 
 Also do in this step: `pub mod sessions;` in `src/sources/mod.rs` [E48], and the `time` features line in `Cargo.toml` → `time = { version = "0.3", features = ["formatting", "macros", "parsing"] }`.
 
-- [ ] **Step 4: Run to verify it passes** — Run: `cargo test --test task_4 2>&1 | tail -3`
+- [x] **Step 4: Run to verify it passes** — Run: `cargo test --test task_4 2>&1 | tail -3`
 Expected: the fixture test passes; expected failures only in the not-yet-written tests (none yet — just this one test). Run: `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && echo GATES-OK` → clean.
 
 #### Sub-task 4.2 — Edge tests for the parser (error accounting, torn tail, orphans, dupes)
 
-- [ ] **Step 1: Add these tests** to `tests/task_4.rs` (synthetic minimal session lines):()
+- [x] **Step 1: Add these tests** to `tests/task_4.rs` (synthetic minimal session lines):()
 ```rust
 fn hdr(id: &str, cwd: &str) -> String {
     serde_json::json!({
@@ -672,11 +672,11 @@ fn duplicate_call_ids_each_row_and_last_one_gets_the_result() {
 }
 ```
 
-- [ ] **Step 2: Run** — `cargo test --test task_4` → all four tests pass; gates clean.
+- [x] **Step 2: Run** — `cargo test --test task_4` → all four tests pass; gates clean.
 
 #### Sub-task 4.3 — Store methods (TDD)
 
-- [ ] **Step 1: Write the failing store test** (mirrors `tests/store.rs` raw-SQL read-back style [E53-adjacent, E27]):()```rust
+- [x] **Step 1: Write the failing store test** (mirrors `tests/store.rs` raw-SQL read-back style [E53-adjacent, E27]):()```rust
 #[test]
 fn upsert_session_with_calls_replaces_rows_and_is_idempotent() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -739,8 +739,8 @@ fn upsert_session_with_calls_replaces_rows_and_is_idempotent() {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** (compile error: `SessionRow` etc. don't exist).
-- [ ] **Step 3: Implement** in `src/store/mod.rs` — types after `EvidenceRow` [E27], methods after `append_evidence` [E26]:()
+- [x] **Step 2: Run to verify it fails** (compile error: `SessionRow` etc. don't exist).
+- [x] **Step 3: Implement** in `src/store/mod.rs` — types after `EvidenceRow` [E27], methods after `append_evidence` [E26]:()
 ```rust
 /// One row to upsert into `sessions` (Task 4). Keyed on `id`; a re-ingest replaces every
 /// column (the session source fully recomputes aggregates on parse).
@@ -829,11 +829,11 @@ and inside `impl Store` (after `append_evidence`):()```rust
     }
 ```
 
-- [ ] **Step 4: Run** — `cargo test --test task_4` → green including the store test; gates clean.
+- [x] **Step 4: Run** — `cargo test --test task_4` → green including the store test; gates clean.
 
 #### Sub-task 4.4 — Discovery, sync, and worktree mapping (TDD)
 
-- [ ] **Step 1: Write the failing tests.** First add the two deferred helpers verbatim at the top of the file (this is where they first get used [cold-review F3]):
+- [x] **Step 1: Write the failing tests.** First add the two deferred helpers verbatim at the top of the file (this is where they first get used [cold-review F3]):
 
 ```rust
 /// A private sessions root mirroring pi's real layout: `<root>/--Users-jesse--/<file>.jsonl`
@@ -1087,8 +1087,8 @@ fn read_agg(store: &repo_assist::store::Store, id: &str, expect_off: &i64) -> (i
 }
 ```
 
-- [ ] **Step 2: Run** — expect compile errors (`discover_session_files`, `resolve_sessions_root`, `sync_sessions` missing).
-- [ ] **Step 3: Implement** the rest of `src/sources/sessions.rs`:()```rust
+- [x] **Step 2: Run** — expect compile errors (`discover_session_files`, `resolve_sessions_root`, `sync_sessions` missing).
+- [x] **Step 3: Implement** the rest of `src/sources/sessions.rs`:()```rust
 /// Resolve the pi sessions root the way pi itself does [E63, E64]:
 /// `PI_CODING_AGENT_SESSION_DIR`, else `$PI_CODING_AGENT_DIR/sessions`, else
 /// `$HOME/.pi/agent/sessions`. `~` values expand against `env.home` (pi's expandTildePath).
@@ -1243,11 +1243,11 @@ fn read_session_id(path: &Path) -> Option<String> {
 }
 ```
 
-- [ ] **Step 4: Run** — `cargo test --test task_4` → green; run each new test once more with `-- --nocapture` to see the sync logs; gates clean.
+- [x] **Step 4: Run** — `cargo test --test task_4` → green; run each new test once more with `-- --nocapture` to see the sync logs; gates clean.
 
 #### Sub-task 4.5 — RPC `Sessions` handler (pure store read)
 
-- [ ] **Step 1: Implement** in `src/ipc/server.rs` — dispatch arm after `Method::Drift` (mirroring that arm's `block_in_place` pattern [E43]), and `sessions_json` after `plans_json`:()```rust
+- [x] **Step 1: Implement** in `src/ipc/server.rs` — dispatch arm after `Method::Drift` (mirroring that arm's `block_in_place` pattern [E43]), and `sessions_json` after `plans_json`:()```rust
         Method::Sessions => {
             let result = tokio::task::block_in_place(|| sessions_json(store))
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -1296,11 +1296,11 @@ fn sessions_json(store: &Store) -> Result<Value, crate::store::StoreError> {
 }
 ```
 
-- [ ] **Step 2: Verify in isolation** (no test yet): replace this with the e2e in 4.7. Meanwhile: `cargo build && echo BUILD-OK`.
+- [x] **Step 2: Verify in isolation** (no test yet): replace this with the e2e in 4.7. Meanwhile: `cargo build && echo BUILD-OK`.
 
 #### Sub-task 4.6 — Daemon ticker wiring (lifecycle: drop-guard)
 
-- [ ] **Step 1: Implement** `src/daemon/sessions.rs` (mirrors the bus thread pattern [E46], with the advisor's Drop guard):()```rust
+- [x] **Step 1: Implement** `src/daemon/sessions.rs` (mirrors the bus thread pattern [E46], with the advisor's Drop guard):()```rust
 //! Sessions ingest ticker (Task 4): a daemon-owned thread that re-ingests pi session
 //! files into the store. Mirrors the worktree event bus: sources feed the store in the
 //! background; RPC handlers stay pure store reads. Freshness: first pass immediately at
@@ -1370,7 +1370,7 @@ Wire it in `src/daemon/mod.rs`: add `pub mod sessions;` beside `pub mod bus;` [E
 
 #### Sub-task 4.7 — CLI `run_sessions`, spec flip, and the end-to-end test
 
-- [ ] **Step 1: Write the failing e2e test** (mirrors `tests/task_2_4.rs::ra_plans_and_plan_over_ipc` verbatim in structure: env-isolate, spawn `ra daemon --foreground`, wait for socket, drive `ra` via assert_cmd [E53, E54]; NO DB seeding — the daemon must ingest everything itself):()```rust
+- [x] **Step 1: Write the failing e2e test** (mirrors `tests/task_2_4.rs::ra_plans_and_plan_over_ipc` verbatim in structure: env-isolate, spawn `ra daemon --foreground`, wait for socket, drive `ra` via assert_cmd [E53, E54]; NO DB seeding — the daemon must ingest everything itself):()```rust
 #[test]
 fn ra_sessions_end_to_end_over_ipc() {
     let mut repo = common::GitRepo::new();
@@ -1474,9 +1474,9 @@ fn ra_sessions_end_to_end_over_ipc() {
 
 Note: the e2e holds `_fix_tmp` (the TempDir) alive as long as the fixture root is needed — assert the binding order in the test (declare `_fix_tmp` before `envs`, as above).
 
-- [ ] **Step 2: Run to verify it fails** — `cargo test --test task_4 2>&1 | tail -6`. The e2e fails at "the daemon must ingest and serve..." (RPC Sessions still `not_implemented`, and `ra sessions` exits non-zero).
+- [x] **Step 2: Run to verify it fails** — `cargo test --test task_4 2>&1 | tail -6`. The e2e fails at "the daemon must ingest and serve..." (RPC Sessions still `not_implemented`, and `ra sessions` exits non-zero).
 
-- [ ] **Step 3: Implement the CLI** in `src/cli.rs` — (a) in `fn spec` [E41]:()```rust
+- [x] **Step 3: Implement the CLI** in `src/cli.rs` — (a) in `fn spec` [E41]:()```rust
         Sessions(_) => Spec {
             implemented: true,
             task: 4,
@@ -1540,13 +1540,13 @@ fn print_sessions_human(s: &serde_json::Value) {
 }
 ```
 
-- [ ] **Step 4: Run the full task verification** — Run: `cargo test`
+- [x] **Step 4: Run the full task verification** — Run: `cargo test`
 Expected: all suites green, now including `task_4.rs` (10 tests: parser×1, edge×3, store×1, discovery×1, sync×3, e2e×1 — ALL pass) + all previous suites.
 Run: `cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && echo GATES-OK`
 Run: `git status --porcelain | grep -v '^??' && echo DIRTY-UNEXPECTED || echo CLEAN` (all changes intentional).
 Expected: gates clean; only expected files modified.
 
-- [ ] **Step 5: Commit (single Task-4 commit, matching the repo's one-commit-per-task convention [E60])**()```bash
+- [x] **Step 5: Commit (single Task-4 commit, matching the repo's one-commit-per-task convention [E60])**()```bash
 git add src/sources/sessions.rs src/sources/mod.rs src/daemon/sessions.rs src/daemon/mod.rs \
   src/store/mod.rs src/ipc/server.rs src/cli.rs Cargo.toml Cargo.lock tests/task_4.rs
 git commit -m "Task 4: pi session source -> sessions store -> RPC Sessions -> ra sessions [--json]
@@ -1573,7 +1573,7 @@ Verified: cargo test all green incl. task_4 (10 tests); fmt/clippy gates clean."
 **Files:**
 - Modify: `status.md` [E58]. No changes to `docs/ra.1.md` [E52 — no flag drifted].
 
-- [ ] **Step 1: Correct status.md** — every edit is enumerated:()
+- [x] **Step 1: Correct status.md** — every edit is enumerated:()
   1. CLI table: `| ra sessions | no | 4 |` → `| ra sessions | yes | 4 |` [the spec table in src/cli.rs flips in 4.7 too — they must agree].
   2. Baseline honesty: replace the test-suite line "`cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` — all clean." with two sentences: (a) the crate's three baseline defects (clippy `nonminimal_bool` in `tests/store.rs`; a Linux-only `/proc` liveness probe that made the second-daemon check fail off-Linux; a macOS tmpdir path-form assumption in `tests/task_2_3.rs`) were repaired in the three `fix(...)` commits listed below, each verified by its own gate; (b) the three gates are re-verified on this machine per task and the latest full-run summary is quoted verbatim (see Task 4, Step 4).
   3. Test-table: add a row for `task_4.rs` ("Task 4 acceptance: pi session source, ingest, worktree mapping, `ra sessions` end-to-end") and correct the counts line if the test totals moved.
@@ -1584,9 +1584,9 @@ Verified: cargo test all green incl. task_4 (10 tests); fmt/clippy gates clean."
 
 (Note: do not claim "all green" without a fresh run — paste the actual `cargo test` summary line from Task 4 Step 4's run.)
 
-- [ ] **Step 2: Verify** — `grep -n sessions status.md` shows the flipped row and the new RPC/notes paragraphs render as intended (eyeball test); `cargo test` still green (docs only).
+- [x] **Step 2: Verify** — `grep -n sessions status.md` shows the flipped row and the new RPC/notes paragraphs render as intended (eyeball test); `cargo test` still green (docs only).
 
-- [ ] **Step 3: Commit**()```bash
+- [x] **Step 3: Commit**()```bash
 git add status.md
 git commit -m "docs: status.md — Task 4 recorded, baseline-repair commits recorded, stale claims corrected"
 ```

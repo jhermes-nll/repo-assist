@@ -293,61 +293,61 @@ tests/fixtures/{pi/,plans/}
 
 ### Task 0.1: Project skeleton and CI
 - Create: `Cargo.toml`, `rust-toolchain.toml`, `.github/workflows/ci.yml`, `src/main.rs`, `src/cli.rs`
-- [ ] `ra --version` and `ra --help` work; CI runs fmt, clippy `-D warnings`, test.
+- [x] `ra --version` and `ra --help` work; CI runs fmt, clippy `-D warnings`, test.
 - Acceptance: `cargo test` passes on an empty test suite; CI file valid.
 
 ### Task 0.2: Paths, repo key, config, logging
 - Create: `src/paths.rs`, `src/config.rs`
 - Test: `tests/git_repo.rs`, `tests/common/mod.rs`
-- [ ] Resolve git common dir from any cwd inside any worktree; compute the repo key; compute state/socket paths.
-- [ ] Load layered TOML config with `deny_unknown_fields` and the defaults in Section 10.
-- [ ] Test helper that builds temp git repos with N worktrees, commits and dirty files.
+- [x] Resolve git common dir from any cwd inside any worktree; compute the repo key; compute state/socket paths.
+- [x] Load layered TOML config with `deny_unknown_fields` and the defaults in Section 10.
+- [x] Test helper that builds temp git repos with N worktrees, commits and dirty files.
 - Acceptance: two worktrees of one repo yield the same key; a different repo yields a different key; bad config gives a readable error.
 
 ### Phase 1 — Daemon skeleton
 
 ### Task 1.1: Store and migrations
 - Create: `src/store/{mod.rs,schema.sql,migrations.rs,queries.rs}`, `src/model.rs`
-- [ ] Open DB in WAL mode; apply schema via `user_version`; refuse newer DBs.
-- [ ] Single writer thread (or mutex) with read connections for queries; all DB calls off the async runtime threads.
+- [x] Open DB in WAL mode; apply schema via `user_version`; refuse newer DBs.
+- [x] Single writer thread (or mutex) with read connections for queries; all DB calls off the async runtime threads.
 - Acceptance: migration test creates a fresh DB and reopens it; a DB with higher `user_version` is rejected.
 
 ### Task 1.2: IPC server/client and `ra daemon`, `ra status`
 - Create: `src/ipc/*`, `src/daemon/{mod.rs,bus.rs,lock.rs}`
 - Test: `tests/cli.rs`
-- [ ] Pidfile flock; stale-socket cleanup; socket `0600`; graceful shutdown on SIGINT/SIGTERM and `shutdown`.
-- [ ] `hello`/`ping`/`status` working end to end; `ra status --json` output is stable.
-- [ ] Auto-spawn on first client command (`--no-spawn` disables); concurrent first calls start exactly one daemon.
+- [x] Pidfile flock; stale-socket cleanup; socket `0600`; graceful shutdown on SIGINT/SIGTERM and `shutdown`.
+- [x] `hello`/`ping`/`status` working end to end; `ra status --json` output is stable.
+- [x] Auto-spawn on first client command (`--no-spawn` disables); concurrent first calls start exactly one daemon.
 - Acceptance: `assert_cmd` test starts the daemon in a temp repo, queries it, shuts it down; running a second daemon for the same repo fails fast with a clear message.
 
 ### Phase 2 — Git, worktrees, findings engine
 
 ### Task 2.1: Git source
 - Create: `src/sources/git.rs`
-- [ ] Discover worktrees via `git worktree list --porcelain -z`; detect base ref; compute merge-base, ahead/behind, and the changed-file set (Section 5) per worktree with `git status --porcelain=v2 -z` and `git diff --name-only <merge-base>`.
-- [ ] Coalesce updates per worktree; at most one in-flight git process per worktree; poll backstop `poll_secs`.
+- [x] Discover worktrees via `git worktree list --porcelain -z`; detect base ref; compute merge-base, ahead/behind, and the changed-file set (Section 5) per worktree with `git status --porcelain=v2 -z` and `git diff --name-only <merge-base>`.
+- [x] Coalesce updates per worktree; at most one in-flight git process per worktree; poll backstop `poll_secs`.
 - Acceptance: tests with temp repos cover committed, staged, unstaged, untracked, renamed, and deleted files, a removed worktree, and detached HEAD.
 
 ### Task 2.2: Filesystem watcher
 - Create: `src/sources/fswatch.rs`
-- [ ] Watch each worktree (respect `.gitignore` via `ignore`; never watch `.git` internals except `HEAD`/refs) with 500 ms debounce; map events to `worktree_dirty{id}`; update `last_activity_ms`.
+- [x] Watch each worktree (respect `.gitignore` via `ignore`; never watch `.git` internals except `HEAD`/refs) with 500 ms debounce; map events to `worktree_dirty{id}`; update `last_activity_ms`.
 - Acceptance: touching a file triggers exactly one refresh within ~1 s in a test; ignored paths trigger none.
 
 ### Task 2.3: Findings engine
 - Create: `src/daemon/findings.rs`, `src/checks/mod.rs`
 - Test: `tests/findings_engine.rs`
-- [ ] Check trait: `fn run(&self, ctx:&CheckCtx) -> Vec<FindingCandidate>`; engine does open/refresh/resolve diffing, reopen-on-reappear, ack handling, and emits delta events.
+- [x] Check trait: `fn run(&self, ctx:&CheckCtx) -> Vec<FindingCandidate>`; engine does open/refresh/resolve diffing, reopen-on-reappear, ack handling, and emits delta events.
 - Acceptance: table tests for every lifecycle transition, including ack-then-resolve-then-reappear.
 
 ### Task 2.4: Worktree checks
 - Create: `src/checks/{worktree_overlap.rs,merge_conflict.rs,abandoned.rs}`
-- [ ] Implement the three kinds from Section 9; cache merge-tree results by head pair; apply `ignore_paths`.
+- [x] Implement the three kinds from Section 9; cache merge-tree results by head pair; apply `ignore_paths`.
 - Acceptance: temp-repo scenarios produce exactly the expected findings and resolve them after the overlap disappears.
 
 ### Task 2.5: Query commands, views, TUI v0
 - Create: `src/views/*`, `src/tui/*` (worktrees + findings tabs), CLI commands `worktrees`, `conflicts`, `who-touches`, `findings`, `ack`, `render`
-- [ ] Atomic markdown rendering per Section 11, snapshot-tested with `insta`.
-- [ ] TUI: header (repo, daemon version, counts), tabs, `j/k` move, `Enter` detail, `a` ack, `Tab`/`1-4` switch, `/` filter, `r` refresh, `q` quit; subscribes and reconnects.
+- [x] Atomic markdown rendering per Section 11, snapshot-tested with `insta`.
+- [x] TUI: header (repo, daemon version, counts), tabs, `j/k` move, `Enter` detail, `a` ack, `Tab`/`1-4` switch, `/` filter, `r` refresh, `q` quit; subscribes and reconnects.
 - Acceptance: `ratatui` `TestBackend` snapshot tests for each tab; killing and restarting the daemon makes the TUI reconnect without crashing.
 
 ### Phase 3 — Plans
@@ -355,7 +355,7 @@ tests/fixtures/{pi/,plans/}
 ### Task 3.1: Plan model, superpowers and checklist adapters
 - Create: `src/plans/{mod.rs,superpowers.rs,checklist.rs}`
 - Test: `tests/plans_parse.rs`, `tests/fixtures/plans/`
-- [ ] Implement parsers per 8.1 against the real fixtures captured in Section 13 item 2, plus this representative sample:
+- [x] Implement parsers per 8.1 against the real fixtures captured in Section 13 item 2, plus this representative sample:
 
 ```markdown
 # Rate Limit Implementation Plan
@@ -374,42 +374,42 @@ Expected: 2 tasks; task 1 `open` with paths `src/limiter.rs`, `tests/limiter.rs`
 ### Task 3.2: Plan discovery, linking, derivation
 - Create: `src/plans/derive.rs`; extend `src/sources/git.rs` with per-path commit lookup
 - Test: `tests/derive.rs`
-- [ ] Discover plan files per worktree on `worktree_dirty` events touching plan globs and on a slow timer; upsert plans/tasks; mark vanished plans `gone`.
-- [ ] Implement `observed` derivation exactly as in Section 9, as a pure function with a truth-table test.
+- [x] Discover plan files per worktree on `worktree_dirty` events touching plan globs and on a slow timer; upsert plans/tasks; mark vanished plans `gone`.
+- [x] Implement `observed` derivation exactly as in Section 9, as a pure function with a truth-table test.
 - Acceptance: temp-repo scenario: committing a task's files flips `observed` to `committed` and records commit evidence.
 
 ### Task 3.3: Plan checks and commands
 - Create: `src/checks/{plan_overlap.rs,plan_drift.rs,plan_stalled.rs,plan_checkbox.rs}`, `src/tui/tabs/plans.rs`; CLI `plans`, `plan`, `drift`
-- [ ] Implement the four kinds from Section 9; plans without `expected_paths` skip the path-based checks and `ra plan` says "no path data".
-- [ ] Plans tab: title, worktree, declared vs observed progress bars, stalled flag; detail pane lists tasks and evidence.
+- [x] Implement the four kinds from Section 9; plans without `expected_paths` skip the path-based checks and `ra plan` says "no path data".
+- [x] Plans tab: title, worktree, declared vs observed progress bars, stalled flag; detail pane lists tasks and evidence.
 - Acceptance: two worktrees with plans listing the same file produce `plan.overlap` before any edit exists.
 
 ### Phase 4 — pi sessions
 
 ### Task 4.1: Capture fixtures and verify facts
 - Create: `tests/fixtures/pi/`, `docs/verified-facts.md`
-- [ ] Copy 3–4 real, redacted pi session files (include one with branching and one with a compaction) and record in `docs/verified-facts.md` the answers to Section 13 items 1 and 3.
+- [x] Copy 3 real, redacted pi session files and record in `docs/verified-facts.md` the answers to Section 13 items 1 and 3. (Done with 3 files; none on this machine contain branching or a `compaction` entry, so those paths are covered by synthetic tests only.)
 - Acceptance: file exists and states each item as verified/not-verified with evidence. Do not proceed to 4.2 on unverified shapes; adjust Section 12 first.
 
 ### Task 4.2: pi adapter
 - Create: `src/agents/{mod.rs,pi.rs}`
 - Test: `tests/pi_adapter.rs`
-- [ ] Discovery, header parsing, worktree linking, incremental tail by byte offset, active-branch resolution, usage and tool-call extraction per Section 12.
-- [ ] Corrupt or partial last line is skipped and retried next poll; increments `parse_errors` only for complete bad lines.
+- [x] Discovery, header parsing, worktree linking, incremental tail by byte offset, active-branch resolution, usage and tool-call extraction per Section 12.
+- [x] Corrupt or partial last line is skipped and retried next poll; increments `parse_errors` only for complete bad lines.
 - Acceptance: fixtures parse with expected token totals and tool-call counts; appending lines to a fixture copy yields only the new events.
 
 ### Task 4.3: Agent checks and sessions tab
 - Create: `src/checks/{agent_loop.rs,agent_tokens.rs}`, `src/tui/tabs/sessions.rs`; CLI `sessions`
-- [ ] Implement `agent.loop` and `agent.tokens` per Section 9; sessions tab shows agent, worktree, `recent/quiet`, last event age, tokens.
+- [x] Implement `agent.loop` and `agent.tokens` per Section 9; sessions tab shows agent, worktree, `recent/quiet`, last event age, tokens.
 - Acceptance: a synthetic session with 6 identical failing calls opens `agent.loop`; a varied session does not.
 
 ### Phase 5 — Hardening
 
 ### Task 5.1: doctor, performance, docs
 - Create: `README.md`, `docs/agents-snippet.md`; extend CLI with `doctor`
-- [ ] `ra doctor` checks git version, state dir, socket, adapter roots, config validity.
-- [ ] Measure and record: idle daemon CPU < 1% and RSS < 50 MB with 5 worktrees; `ra status` < 100 ms warm; cap events table and tool-call ring sizes.
-- [ ] README: install, quick start, config reference, how to add a plan source or agent adapter.
+- [x] `ra doctor` checks git version, state dir, socket, adapter roots, config validity.
+- [x] Measure and record: idle daemon CPU < 1% and RSS < 50 MB with 5 worktrees; `ra status` < 100 ms warm; cap events table and tool-call ring sizes.
+- [x] README: install, quick start, config reference, how to add a plan source or agent adapter.
 - Acceptance: numbers recorded in README; all CI checks green.
 
 ## 16. Definition of done
