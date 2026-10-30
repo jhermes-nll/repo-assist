@@ -273,6 +273,13 @@ async fn dispatch_request(
                 .await?,
             }
         }
+        Method::PlansTick => {
+            let plan_id = req.params.get("plan").and_then(Value::as_str).map(String::from);
+            let apply = req.params.get("apply").and_then(Value::as_bool).unwrap_or(false);
+            let result = tokio::task::block_in_place(|| plans_tick_json(store, plan_id.as_deref(), apply))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+        }
         Method::Plan => {
             match req.params.get("id").and_then(Value::as_str) {
                 None => write_reply(
@@ -935,4 +942,158 @@ fn ack_json(store: &Store, params: &Value) -> Result<Value, crate::store::StoreE
     let now = crate::sources::git::now_ms();
     let ok = store.ack_finding(&id, now)?;
     Ok(json!({ "ok": ok, "id": id }))
+}
+
+/// Tick plan checkboxes based on derived observed state.
+pub fn plans_tick_json(
+    store: &Store,
+    plan_filter: Option<&str>,
+    apply: bool,
+) -> Result<serde_json::Value, crate::store::StoreError> {
+    // Fresh sync like daemon ticker but immediate.
+    let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let _ = crate::sources::git::sync_worktrees(store, &repo_root);
+
+    let worktrees = store.read(|conn| {
+        let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
+        let mut out = Vec::new();
+        for r in stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })? {
+            out.push(r?);
+        }
+        Ok(out)
+    })?;
+    let _ = &worktrees;
+
+    // Collect plans
+    let plans: Vec<(String, String, Option<i64>, Option<String>)> = store.read(|conn| {
+        let mut stmt = conn.prepare("SELECT id, file, worktree_id, (SELECT path FROM worktrees WHERE id=plans.worktree_id) FROM plans WHERE state != 'gone'")?;
+        let mut out = Vec::new();
+        for r in stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default(), row.get::<_, Option<i64>>(2)?, row.get::<_, Option<String>>(3)?))
+        })? {
+            out.push(r?);
+        }
+        Ok(out)
+    })?;
+
+    let mut out_plans = Vec::new();
+    let mut total_boxes = 0usize;
+    let mut skipped_no_paths = 0usize;
+
+    for (plan_id, rel, _wt_id, wt_path) in plans {
+        if let Some(f) = plan_filter {
+            if plan_id != f && !plan_id.starts_with(f) {
+                continue;
+            }
+        }
+        let wt_path = match wt_path {
+            Some(p) => p,
+            None => {
+                out_plans.push(serde_json::json!({"id": plan_id, "skipped": true, "skip_reason": "no worktree", "boxes":0,"tasks":0,"diff":""}));
+                continue;
+            }
+        };
+        let abs_path = std::path::PathBuf::from(&wt_path).join(&rel);
+        let text = match std::fs::read_to_string(&abs_path) {
+            Ok(t) => t,
+            Err(e) => {
+                out_plans.push(serde_json::json!({"id": plan_id, "file": rel, "worktree": wt_path, "skipped": true, "skip_reason": format!("read error: {e}"), "boxes":0,"tasks":0,"diff":""}));
+                continue;
+            }
+        };
+
+        // observed per task from store
+        let tasks: Vec<(i64, String)> = store.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ordinal, observed FROM tasks WHERE plan_id = ?1 ORDER BY ordinal",
+            )?;
+            let mut out = Vec::new();
+            for r in stmt.query_map([plan_id.as_str()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })? {
+                out.push(r?);
+            }
+            Ok(out)
+        })?;
+        let mut committed_set = std::collections::BTreeSet::new();
+        for (ord, obs) in &tasks {
+            if obs == "committed" {
+                committed_set.insert(*ord as usize);
+            }
+        }
+        // skipped if no expected paths: all tasks unknown
+        let all_unknown = !tasks.is_empty() && tasks.iter().all(|(_, o)| o == "unknown");
+        if all_unknown {
+            skipped_no_paths += 1;
+        }
+
+        let dirty = crate::plans::tick::is_git_dirty(std::path::Path::new(&wt_path), &rel);
+        let lines = crate::plans::tick::select_tick_lines(&text, &committed_set);
+        // generate diff
+        let new_text = crate::plans::tick::rewrite_lines(&text, &lines);
+        let mut diff = String::new();
+        for &ln in &lines {
+            // find old line
+            let old_line = text
+                .split_inclusive('\n')
+                .nth(ln)
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .trim_end_matches('\r');
+            let new_line = new_text
+                .split_inclusive('\n')
+                .nth(ln)
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .trim_end_matches('\r');
+            diff.push_str(&format!(
+                "@@ -{},1 +{},1 @@\n-{}\n+{}\n",
+                ln + 1,
+                ln + 1,
+                old_line,
+                new_line
+            ));
+        }
+        // apply
+        let applied = if apply && !dirty && !lines.is_empty() {
+            crate::plans::tick::apply_atomic(&abs_path, &new_text).is_ok()
+        } else {
+            false
+        };
+
+        total_boxes += lines.len();
+        // tasks ticked: number of distinct committed tasks that had at least one line
+        // approximate = committed_set len if lines nonempty
+
+        out_plans.push(serde_json::json!({
+            "id": plan_id,
+            "file": rel,
+            "worktree": wt_path,
+            "dirty": dirty,
+            "skipped_no_expected_paths": all_unknown,
+            "applied": applied,
+            "boxes": lines.len(),
+            "tasks": committed_set.len(),
+            "diff": diff,
+        }));
+    }
+
+    // fix total_tasks: count tasks that had any ticked box per plan? Recompute from boxes? We'll instead count distinct tasks with committed & lines.
+    // Recompute total_tasks as sum of plans.tasks where boxes>0
+    let total_tasks: usize = out_plans
+        .iter()
+        .filter(|p| p.get("boxes").and_then(|v| v.as_u64()).unwrap_or(0) > 0)
+        .map(|p| p.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0) as usize)
+        .sum();
+
+    let summary = format!("{} boxes in {} tasks", total_boxes, total_tasks);
+    Ok(serde_json::json!({
+        "plans": out_plans,
+        "total_boxes": total_boxes,
+        "total_tasks": total_tasks,
+        "skipped_no_expected_paths": skipped_no_paths,
+        "summary": summary,
+    }))
 }

@@ -19,6 +19,7 @@ pub mod checklist;
 pub mod derive;
 pub mod discover;
 pub mod superpowers;
+pub mod tick;
 
 pub use derive::{
     derive, derive_observed, plan_id, run_truth_table, DeriveCase, DeriveInput, EvidenceSeed,

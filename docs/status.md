@@ -59,6 +59,7 @@ Public store methods (subset): `open` / `open_with`, `read`, `write`, `append_ev
 | `ra worktrees` | yes | 5 |
 | `ra plans` | yes | 2 |
 | `ra plan <id>` | yes | 2 |
+| `ra plans tick [--plan <id>] [--apply]` | yes | 3 |
 | `ra drift` | yes | 3 |
 | `ra conflicts` | yes | 5 |
 | `ra who-touches` | yes | 5 |
