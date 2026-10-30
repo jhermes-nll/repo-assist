@@ -1,6 +1,7 @@
 //! Two-sided guard: specs are excluded from the plan findings engine and from
 //! `active_plans`, while real plans with equivalent content remain active/firing.
 
+mod common;
 use repo_assist::checks::{self, CheckCtx};
 use repo_assist::config::Config;
 use repo_assist::store::{CheckWorkspace, PlanInfo, TaskInfo};
@@ -33,7 +34,6 @@ fn task(plan_id: &str) -> TaskInfo {
 #[test]
 fn open_spec_produces_no_plan_stalled_finding() {
     let cfg = Config::default_config();
-    let mut tasks = vec![];
     // spec case
     let spec_plan = make_plan("spec:1", "spec", "active", None);
     let spec_task = task("spec:1");
@@ -56,13 +56,12 @@ fn open_spec_produces_no_plan_stalled_finding() {
     );
 
     // plan (equivalent content) still fires
-    let mut tasks2 = vec![task("plan:1")];
-    tasks.append(&mut tasks2);
     let plan_plan = make_plan("plan:1", "superpowers", "active", None);
+    let plan_task = task("plan:1");
     let ws2 = CheckWorkspace {
         worktrees: vec![],
         plans: vec![spec_plan, plan_plan],
-        tasks,
+        tasks: vec![spec_task, plan_task],
         sessions: vec![],
         activity: HashMap::new(),
     };
@@ -132,8 +131,7 @@ fn spec_does_not_produce_plan_checkbox_mismatch() {
     assert!(
         findings
             .iter()
-            .any(|f| f.dedupe_key == "plan.checkbox_mismatch:plan:1:1"
-                || f.dedupe_key.contains("plan:1")),
+            .any(|f| f.dedupe_key == "plan.checkbox_mismatch:plan:1:1"),
         "plan must still fire plan.checkbox_mismatch: {findings:?}"
     );
     assert!(
@@ -329,4 +327,133 @@ fn active_plans_count_excludes_specs() {
         .unwrap();
     // Source string equality: use repo_assist's const via path.
     assert_eq!(count, 1, "only the real plan should count, got {count}");
+}
+
+#[test]
+fn plan_drift_value_excludes_specs() {
+    use common::GitRepo;
+    use repo_assist::ipc::server::plan_drift_value;
+    use repo_assist::plans::discover::SPEC_SOURCE;
+    use repo_assist::sources::git::sync_worktrees;
+    use repo_assist::store::{PlanRow, Store, TaskRow};
+    use std::path::Path;
+
+    let mut repo = GitRepo::new();
+    repo.add_worktree("wt-a", "a.txt");
+    let wt = repo.paths[0].clone();
+    std::fs::write(wt.join("extra.txt"), "drifted\n").expect("write extra");
+    let run = |dir: &Path, args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .expect("git executed");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    run(&wt, &["add", "extra.txt"]);
+    run(&wt, &["commit", "-qm", "add extra"]);
+
+    let db = repo
+        .path()
+        .join("state")
+        .join("repo-assist")
+        .join("manual")
+        .join("db.sqlite");
+    std::fs::create_dir_all(db.parent().expect("parent")).expect("create dirs");
+    let store = Store::open(&db).expect("open");
+
+    sync_worktrees(&store, repo.path()).expect("sync_worktrees");
+
+    // resolve worktree id/path/branch/base_ref for wt-a
+    let (wt_id, _path, _branch, _base_ref): (i64, String, Option<String>, Option<String>) = store
+        .read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, path, branch, base_ref FROM worktrees WHERE path LIKE '%/wt-a'",
+            )?;
+            let mut found = None;
+            for r in stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })? {
+                found = Some(r?);
+            }
+            Ok(found.unwrap())
+        })
+        .expect("resolve wt");
+
+    // spec half
+    store
+        .upsert_plan(
+            &PlanRow {
+                id: "spec-drift",
+                source: SPEC_SOURCE,
+                title: "spec",
+                file: Some("docs/x.md"),
+                worktree_id: Some(wt_id),
+                content_hash: None,
+                state: "active",
+            },
+            1_000,
+        )
+        .unwrap();
+    store
+        .upsert_task(&TaskRow {
+            id: "spec-drift:1",
+            plan_id: "spec-drift",
+            ordinal: 1,
+            title: "t",
+            declared: "done",
+            expected_paths: &[],
+            depends_on: &[],
+        })
+        .unwrap();
+
+    let v = plan_drift_value(&store).expect("plan_drift_value");
+    let drift = v.get("drift").unwrap().as_array().unwrap();
+    assert!(
+        !drift.iter().any(|r| r["plan"] == "spec-drift"),
+        "spec must not appear in ra drift output: {drift:?}"
+    );
+
+    // plan half
+    store
+        .upsert_plan(
+            &PlanRow {
+                id: "plan-drift",
+                source: "superpowers",
+                title: "plan",
+                file: Some("docs/superpowers/plans/x.md"),
+                worktree_id: Some(wt_id),
+                content_hash: None,
+                state: "active",
+            },
+            1_000,
+        )
+        .unwrap();
+    store
+        .upsert_task(&TaskRow {
+            id: "plan-drift:1",
+            plan_id: "plan-drift",
+            ordinal: 1,
+            title: "t",
+            declared: "done",
+            expected_paths: &[],
+            depends_on: &[],
+        })
+        .unwrap();
+
+    let v2 = plan_drift_value(&store).expect("plan_drift_value");
+    let drift2 = v2.get("drift").unwrap().as_array().unwrap();
+    assert!(
+        drift2.iter().any(|r| r["plan"] == "plan-drift"),
+        "plan must still appear in ra drift output: {drift2:?}"
+    );
+    assert!(
+        !drift2.iter().any(|r| r["plan"] == "spec-drift"),
+        "spec must stay silent alongside plan: {drift2:?}"
+    );
 }

@@ -664,7 +664,7 @@ fn plan_json(store: &Store, id: &str) -> Result<Option<Value>, crate::store::Sto
 /// output (via [`crate::sources::git::changed_file_set`]) and asks the store which changed
 /// paths no task expects (see [`Store::plan_drift_from_changed`]). Plans with no worktree are
 /// skipped. Output is ordered by plan id, then path (stable for tests).
-fn plan_drift_value(store: &Store) -> Result<Value, crate::store::StoreError> {
+pub fn plan_drift_value(store: &Store) -> Result<Value, crate::store::StoreError> {
     use crate::sources::git::changed_file_set;
     // plan_worktrees() already returns `Result<_, StoreError>`, so `?` propagates the
     // genuine SQL failure directly (matching the function's return type) instead of

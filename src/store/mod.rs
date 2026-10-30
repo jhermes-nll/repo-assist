@@ -587,17 +587,21 @@ impl Store {
             let mut stmt = conn.prepare(
                 "SELECT p.id, p.worktree_id, wt.path, wt.branch, wt.base_ref
                  FROM plans p
-                 LEFT JOIN worktrees wt ON wt.id = p.worktree_id",
+                 LEFT JOIN worktrees wt ON wt.id = p.worktree_id
+                 WHERE p.source != ?1",
             )?;
-            let rows = stmt.query_map([], |row| {
-                Ok(PlanWorktreeRef {
-                    plan_id: row.get::<_, String>(0)?,
-                    worktree_id: row.get::<_, Option<i64>>(1)?,
-                    path: row.get::<_, Option<String>>(2)?,
-                    branch: row.get::<_, Option<String>>(3)?,
-                    base_ref: row.get::<_, Option<String>>(4)?,
-                })
-            })?;
+            let rows = stmt.query_map(
+                rusqlite::params![crate::plans::discover::SPEC_SOURCE],
+                |row| {
+                    Ok(PlanWorktreeRef {
+                        plan_id: row.get::<_, String>(0)?,
+                        worktree_id: row.get::<_, Option<i64>>(1)?,
+                        path: row.get::<_, Option<String>>(2)?,
+                        branch: row.get::<_, Option<String>>(3)?,
+                        base_ref: row.get::<_, Option<String>>(4)?,
+                    })
+                },
+            )?;
             rows.collect::<Result<Vec<_>, _>>()
         })
     }
