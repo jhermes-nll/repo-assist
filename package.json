@@ -1,0 +1,8 @@
+{
+  "name": "repo-assist-verify",
+  "private": true,
+  "description": "Shim so npm-based verification runs this Rust project's real gates.",
+  "scripts": {
+    "test": "export RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.99.1-aarch64-unknown-linux-gnu}; mkdir -p /tmp/ra-test && TMPDIR=/tmp/ra-test cargo fmt --all --check && TMPDIR=/tmp/ra-test cargo clippy --all-targets --all-features -- -D warnings && TMPDIR=/tmp/ra-test cargo test --all-targets"
+  }
+}
