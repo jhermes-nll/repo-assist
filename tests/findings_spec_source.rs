@@ -86,7 +86,6 @@ fn open_spec_produces_no_plan_stalled_finding() {
     );
 }
 
-
 #[test]
 fn spec_does_not_produce_plan_checkbox_mismatch() {
     let cfg = Config::default_config();
@@ -102,7 +101,11 @@ fn spec_does_not_produce_plan_checkbox_mismatch() {
         sessions: vec![],
         activity: HashMap::new(),
     };
-    let ctx = CheckCtx { workspace: &ws, config: &cfg, now: 0 };
+    let ctx = CheckCtx {
+        workspace: &ws,
+        config: &cfg,
+        now: 0,
+    };
     assert!(
         checks::plan_checkbox::check_plan_checkbox(&ctx).is_empty(),
         "spec must not fire plan.checkbox_mismatch"
@@ -120,10 +123,17 @@ fn spec_does_not_produce_plan_checkbox_mismatch() {
         sessions: vec![],
         activity: HashMap::new(),
     };
-    let ctx2 = CheckCtx { workspace: &ws2, config: &cfg, now: 0 };
+    let ctx2 = CheckCtx {
+        workspace: &ws2,
+        config: &cfg,
+        now: 0,
+    };
     let findings = checks::plan_checkbox::check_plan_checkbox(&ctx2);
     assert!(
-        findings.iter().any(|f| f.dedupe_key == "plan.checkbox_mismatch:plan:1:1" || f.dedupe_key.contains("plan:1")),
+        findings
+            .iter()
+            .any(|f| f.dedupe_key == "plan.checkbox_mismatch:plan:1:1"
+                || f.dedupe_key.contains("plan:1")),
         "plan must still fire plan.checkbox_mismatch: {findings:?}"
     );
     assert!(
@@ -160,7 +170,11 @@ fn spec_does_not_produce_plan_drift() {
         sessions: vec![],
         activity: HashMap::new(),
     };
-    let ctx = CheckCtx { workspace: &ws, config: &cfg, now: 0 };
+    let ctx = CheckCtx {
+        workspace: &ws,
+        config: &cfg,
+        now: 0,
+    };
     assert!(
         checks::plan_drift::check_plan_drift(&ctx).is_empty(),
         "spec must not produce plan.drift"
@@ -176,7 +190,11 @@ fn spec_does_not_produce_plan_drift() {
         sessions: vec![],
         activity: HashMap::new(),
     };
-    let ctx2 = CheckCtx { workspace: &ws2, config: &cfg, now: 0 };
+    let ctx2 = CheckCtx {
+        workspace: &ws2,
+        config: &cfg,
+        now: 0,
+    };
     let findings = checks::plan_drift::check_plan_drift(&ctx2);
     assert!(
         findings.iter().any(|f| f.dedupe_key == "plan.drift:plan:1"),
@@ -252,8 +270,16 @@ fn plans_json_stalled_flag_suppresses_specs() {
     let plans = v.get("plans").unwrap().as_array().unwrap();
     let spec = plans.iter().find(|p| p["id"] == "spec-row").unwrap();
     let plan = plans.iter().find(|p| p["id"] == "plan-row").unwrap();
-    assert_eq!(spec["stalled"].as_bool(), Some(false), "spec stalled must be false");
-    assert_eq!(plan["stalled"].as_bool(), Some(true), "plan stalled must be true");
+    assert_eq!(
+        spec["stalled"].as_bool(),
+        Some(false),
+        "spec stalled must be false"
+    );
+    assert_eq!(
+        plan["stalled"].as_bool(),
+        Some(true),
+        "plan stalled must be true"
+    );
 }
 #[test]
 fn active_plans_count_excludes_specs() {

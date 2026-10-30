@@ -96,21 +96,34 @@ fn spec_adapter_is_registered_last_with_default_glob() {
     assert!(repo_assist::plans::plan_globs().contains(&"docs/**/*.md".to_string()));
 }
 
-
 #[test]
 fn spec_with_headings_but_no_checkboxes_is_unknown() {
     let h = setup();
-    write(&h, "docs/h.md", "# H\n\n### Task 1: a\n### Task 2: b\n### Task 3: c\n");
+    write(
+        &h,
+        "docs/h.md",
+        "# H\n\n### Task 1: a\n### Task 2: b\n### Task 3: c\n",
+    );
     sync(&h);
-    assert_eq!(row_for(&h, "docs/h.md"), Some(("spec".into(), "unknown".into())));
+    assert_eq!(
+        row_for(&h, "docs/h.md"),
+        Some(("spec".into(), "unknown".into()))
+    );
 }
 
 #[test]
 fn spec_with_headings_and_mixed_boxes_is_active() {
     let h = setup();
-    write(&h, "docs/h.md", "# H\n\n### Task 1: a\n- [x] done\n- [ ] todo\n");
+    write(
+        &h,
+        "docs/h.md",
+        "# H\n\n### Task 1: a\n- [x] done\n- [ ] todo\n",
+    );
     sync(&h);
-    assert_eq!(row_for(&h, "docs/h.md"), Some(("spec".into(), "active".into())));
+    assert_eq!(
+        row_for(&h, "docs/h.md"),
+        Some(("spec".into(), "active".into()))
+    );
 }
 
 #[test]
@@ -118,15 +131,25 @@ fn spec_with_headings_and_all_boxes_checked_is_done() {
     let h = setup();
     write(&h, "docs/h.md", "# H\n\n### Task 1: a\n- [x] done\n");
     sync(&h);
-    assert_eq!(row_for(&h, "docs/h.md"), Some(("spec".into(), "done".into())));
+    assert_eq!(
+        row_for(&h, "docs/h.md"),
+        Some(("spec".into(), "done".into()))
+    );
 }
 
 #[test]
 fn spec_with_link_bullet_and_no_real_checkboxes_is_unknown() {
     let h = setup();
-    write(&h, "docs/h.md", "# H\n\n### Task 1: a\n- [spec](http://x)\n");
+    write(
+        &h,
+        "docs/h.md",
+        "# H\n\n### Task 1: a\n- [spec](http://x)\n",
+    );
     sync(&h);
-    assert_eq!(row_for(&h, "docs/h.md"), Some(("spec".into(), "unknown".into())));
+    assert_eq!(
+        row_for(&h, "docs/h.md"),
+        Some(("spec".into(), "unknown".into()))
+    );
 }
 
 #[test]

@@ -235,7 +235,9 @@ where
                     parsed.title.clone()
                 };
                 let declared_state = parsed.declared_state();
-                let has_checkbox = text.lines().any(|l| crate::plans::parse_checkbox(l).is_some());
+                let has_checkbox = text
+                    .lines()
+                    .any(|l| crate::plans::parse_checkbox(l).is_some());
                 let state = if declared_state == "done" {
                     "done"
                 } else if adapter.name() == SPEC_SOURCE {
