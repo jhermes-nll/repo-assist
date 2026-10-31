@@ -137,7 +137,7 @@ The three gates are re-verified on this machine for this task: `cargo fmt --chec
 | `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
 | `e41085e` | fix(test): repair tui detail-clears test |
 
-Latest `main` commit: `d8844d7` (this doc refresh lands one commit later). The seven `overnight-*` branches plus the two in-flight cezar branches (`cez/148278d7`, `cez/52509991`) have landed on `main` (101 -> 126 tests).
+Latest `main` commit: `c2aa80f` (this doc refresh lands one commit later). The seven `overnight-*` branches plus the two in-flight cezar branches (`cez/148278d7`, `cez/52509991`) have landed on `main` (101 -> 126 tests).
 
 ## Status summary
 
