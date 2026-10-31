@@ -135,7 +135,7 @@ up in `git log <merge_base>..HEAD` on the plan branch. Decision as implemented: 
 suppress this. `plan.checkbox_mismatch` (`src/checks/plan_checkbox.rs`) reports `declared=open` /
 `observed=committed` and `declared=done` / `observed=not_started` (with `expected_paths` known) at
 severity `warn`, and `ra plan` / `plan.stalled` surface the discrepancy to the human. Revisit the
-evidence confidence (currently `explicit`) if real-world plan data shows noise.
+evidence confidence (currently `inferred`, per PR #9) if real-world plan data shows noise.
 
 ---
 
