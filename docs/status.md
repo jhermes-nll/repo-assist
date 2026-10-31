@@ -85,13 +85,15 @@ Not exposed as RPC (run locally by CLI): `Doctor`.
 | `doctor.rs` | 7 | environment checks |
 | `findings_engine.rs` | 5 | findings lifecycle (open → acked/resolved → reopen) |
 | `findings_kind.rs` | 1 | findings `--kind` filter over real IPC path |
+| `findings_spec_source.rs` | 6 | findings spec-source tracking |
 | `fswatch.rs` | 2 | fs watcher |
 | `git_repo.rs` | 3 | git repo ops |
 | `git_source.rs` | 8 | changed-file sets |
-| `lib` (unit) | 2 | in-crate unit tests |
+| `lib` (unit) | 8 | in-crate unit tests |
 | `null_is_error.rs` | 1 | a NULL `tool_calls.is_error` does not break the findings workspace build |
 | `plans_discover.rs` | 1 | plan file discovery |
 | `plans_parse.rs` | 18 | plan file parsers |
+| `plans_spec.rs` | 10 | plans spec acceptance |
 | `stale_socket.rs` | 1 | a present-but-unlistened socket is recovered from by auto-spawning a daemon |
 | `store.rs` | 5 | store CRUD |
 | `store_helpers.rs` | 2 | store helpers |
@@ -101,9 +103,9 @@ Not exposed as RPC (run locally by CLI): `Doctor`.
 | `task_3.rs` | 3 | **drift** (drifts when a task doesn't expect it, reports nothing otherwise, unknown plan -> None) |
 | `task_4.rs` | 12 | Task 4 acceptance: pi session source, ingest, worktree mapping, `ra sessions` end-to-end |
 | `tui.rs` | 18 | four-tab TUI |
-| `views_render.rs` | 11 | view rendering + atomic writes |
+| `views_render.rs` | 12 | view rendering + atomic writes |
 
-The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 126 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out` (per-suite: lib 2, cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, fswatch 2, git_repo 3, git_source 8, null_is_error 1, plans_discover 1, plans_parse 18, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 11; `performance` 0 passed / 1 ignored), green on 3 consecutive runs. Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
+The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 149 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out` (per-suite: lib 8, cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, findings_spec_source 6, fswatch 2, git_repo 3, git_source 8, null_is_error 1, plans_discover 1, plans_parse 18, plans_spec 10, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tui 18, views_render 12; `performance` 0 passed / 1 ignored), green on 3 consecutive runs. Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
 
 ## Commits on `main`
 

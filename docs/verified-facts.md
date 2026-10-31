@@ -5,8 +5,8 @@
 > Sunday 2026-10-18, from the live state at `~/.pi/agent/sessions` and the installed toolchain.
 > Everything below was read from real files/commands — not inferred.
 
-Toolchain: `cargo 1.97.1`, `rustc 1.97.1`, host `aarch64-unknown-linux-gnu`.
-Git: `git version 2.43.0` (see section 13.4 — `merge-tree --write-tree` tested OK on 2.43).
+Toolchain: `cargo 1.99.1`, `rustc 1.99.1`, host `aarch64-unknown-linux-gnu`.
+Git: `git version 2.39.5` (see section 13.4 — `merge-tree --write-tree` tested OK on 2.39).
 
 ---
 
@@ -118,7 +118,7 @@ repos built in `tests/common`, not a subtext clone.
 
 ## Item 4 — `git merge-tree --write-tree` supported (verified ✅)
 
-`git version 2.43.0 ≥ 2.38` (feature present). Tested live on a temp repo:
+`git version 2.39.5 ≥ 2.38` (feature present). Tested live on a temp repo:
 - Two-feature merge with a real file conflict → exit code **1** and conflict output including
   `CONFLICT (content): Merge conflict in c` (and staged blob lines). ✓
 - Non-conflicting merge of two branches → exit 0 with a single tree sha printed. ✓
