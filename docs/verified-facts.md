@@ -87,11 +87,12 @@ the toolResult message.content)`. Both derive cleanly from these shapes.
 
 ---
 
-## Item 2 — Real superpowers plan markup (resolved ✅ — real plans now exist)
+## Item 2 — Real superpowers plan markup (stale premise ✅ — described the probe target, not this repo)
 
 When first checked (2026-10-18) no superpowers plans existed on this machine, so the representative
-sample in the implementation plan (Task 3.1) was used as the spec. That premise is stale: this repo
-now carries real superpowers plans under `docs/superpowers/plans/*.md`, and the parsers
+sample in the implementation plan (Task 3.1) was used as the spec. That statement described the
+probe target (the machine scan under `/home/jesse`), not this repository, and is a stale premise: this
+repo now carries real superpowers plans under `docs/superpowers/plans/*.md`, and the parsers
 (`src/plans/superpowers.rs`, `src/plans/checklist.rs`) are covered by `tests/plans_parse.rs` using
 `tests/fixtures/plans/` (`representative-superpowers-plan.md`, `todo.md`, `unknown-format.md`).
 
@@ -128,14 +129,14 @@ So the `worktree.merge_conflict` check can be enabled and `ra doctor` should ass
 
 ---
 
-## Item 5 — Plan checkbox updates committed on the plan's branch (product question; implemented ✅)
+## Item 5 — Plan checkbox updates committed on the plan's branch (verified ✅ — closed by sibling card)
 
 Not a data fact: whether checkbox updates a plan author marks `[x]` are committed before they show
 up in `git log <merge_base>..HEAD` on the plan branch. Decision as implemented: we do not silently
 suppress this. `plan.checkbox_mismatch` (`src/checks/plan_checkbox.rs`) reports `declared=open` /
 `observed=committed` and `declared=done` / `observed=not_started` (with `expected_paths` known) at
 severity `warn`, and `ra plan` / `plan.stalled` surface the discrepancy to the human. Revisit the
-evidence confidence (currently `explicit`) if real-world plan data shows noise.
+evidence confidence (currently `inferred`, per PR #9) if real-world plan data shows noise.
 
 ---
 
