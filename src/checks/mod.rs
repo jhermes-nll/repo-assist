@@ -405,3 +405,16 @@ fn check_agent_tokens(ctx: &CheckCtx) -> Vec<FindingCandidate> {
     }
     out
 }
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::matches_ignore;
+
+    #[test]
+    fn lock_and_snap_patterns_ignore() {
+        let patterns = vec!["*.lock".to_string(), "**/*.snap".to_string()];
+        assert!(matches_ignore("Cargo.lock", &patterns));
+        assert!(matches_ignore("a/b/foo.snap", &patterns));
+        assert!(!matches_ignore("src/main.rs", &patterns));
+    }
+}
