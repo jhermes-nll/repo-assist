@@ -44,7 +44,7 @@ pub fn check_plan_checkbox(ctx: &CheckCtx) -> Vec<FindingCandidate> {
                 &summary,
                 "warn",
                 evidence,
-                "explicit",
+                "inferred",
             ));
         }
     }

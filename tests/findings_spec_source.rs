@@ -128,12 +128,11 @@ fn spec_does_not_produce_plan_checkbox_mismatch() {
         now: 0,
     };
     let findings = checks::plan_checkbox::check_plan_checkbox(&ctx2);
-    assert!(
-        findings
-            .iter()
-            .any(|f| f.dedupe_key == "plan.checkbox_mismatch:plan:1:1"),
-        "plan must still fire plan.checkbox_mismatch: {findings:?}"
-    );
+    let plan_finding = findings
+        .iter()
+        .find(|f| f.dedupe_key == "plan.checkbox_mismatch:plan:1:1")
+        .expect("plan must still fire plan.checkbox_mismatch");
+    assert_eq!(plan_finding.confidence, "inferred");
     assert!(
         !findings.iter().any(|f| f.dedupe_key.contains("spec:1")),
         "spec must stay silent: {findings:?}"
