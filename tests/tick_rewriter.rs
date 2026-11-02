@@ -159,3 +159,35 @@ fn nospace_checkbox_under_committed_task_ticks() {
     );
     assert_eq!(out, "## Task 1\n-[x] box\n");
 }
+
+#[test]
+fn apply_atomic_preserves_symlink_and_updates_target() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+    let target = root.join("target.md");
+    std::fs::write(&target, "# Plan\n- [ ] box\n").unwrap();
+    let link = root.join("link.md");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let new_text = "# Plan\n- [x] box\n";
+    repo_assist::plans::tick::apply_atomic(&link, new_text, Some(root)).unwrap();
+
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), new_text);
+}
+
+#[test]
+fn apply_atomic_deleted_file_errors_and_not_recreated() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+    let path = root.join("plan.md");
+    std::fs::write(&path, "# Plan\n- [ ] box\n").unwrap();
+    std::fs::remove_file(&path).unwrap();
+
+    let res = repo_assist::plans::tick::apply_atomic(&path, "# Plan\n- [x] box\n", Some(root));
+    assert!(res.is_err());
+    assert!(!path.exists());
+}
