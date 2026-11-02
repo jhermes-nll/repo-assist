@@ -43,25 +43,30 @@ pub fn select_tick_lines(text: &str, committed: &BTreeSet<usize>) -> Vec<usize> 
             current_task = Some(task_count);
             continue;
         }
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with('-') {
+        // Recognise checkboxes through the shared helper so the rewriter cannot drift
+        // from the parsers about what counts as a checkbox.
+        let checked = match crate::plans::parse_checkbox(line) {
+            Some(b) => b,
+            None => continue,
+        };
+
+        // Generic (no task headings) path mirrors checklist::parse: column-0 bullets
+        // only; an indented line is not a separate task.
+        if !has_task_headings && !line.starts_with('-') {
             continue;
         }
-        if !trimmed.starts_with("- [") {
-            continue;
-        }
-        if !line.contains("[ ]") {
-            continue;
-        }
+
         let is_committed = if has_task_headings {
-            if let Some(cur) = current_task {
-                committed.contains(&cur)
-            } else {
-                false
-            }
+            // Only unchecked boxes can be ticked.
+            !checked
+                && current_task
+                    .map(|cur| committed.contains(&cur))
+                    .unwrap_or(false)
         } else {
+            // Advance per parse_checkbox-accepted line, including already checked ones,
+            // so ordinals match checklist::parse.
             generic_idx += 1;
-            committed.contains(&generic_idx)
+            committed.contains(&generic_idx) && !checked
         };
         if is_committed {
             result.push(i);
