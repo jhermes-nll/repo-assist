@@ -61,6 +61,7 @@ fn plans_tick_fresh_daemon_empty_worktrees_table_ticks_box() {
 
     let db = dir.path().join("db.sqlite");
     let store = Store::open(&db).unwrap();
+    store.mark_startup_scan_complete();
     // Genuinely empty worktrees table, no plans synced: supply only repo path.
     let res = plans_tick_json(&store, None, false, Some(&wt)).unwrap();
     let boxes = res.get("total_boxes").and_then(|v| v.as_u64()).unwrap_or(0);

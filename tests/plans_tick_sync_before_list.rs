@@ -76,6 +76,7 @@ fn plans_tick_syncs_before_list() {
 
     let db = dir.path().join("db.sqlite");
     let store = Store::open(&db).unwrap();
+    store.mark_startup_scan_complete();
     // Store is populated (worktree present) but plans NOT synced.
     store
         .write(|conn| {

@@ -100,6 +100,20 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
         sessions_root,
     );
 
+    // Initial startup scan: sync worktrees + plans before serving ticks (barrier signal).
+    let _ = crate::sources::git::sync_worktrees(&store, repo_root);
+    if let Ok(wts) = store.worktree_id_paths() {
+        for (id, path) in wts {
+            let _ = crate::plans::discover::sync_plans(
+                &store,
+                id,
+                std::path::Path::new(&path),
+                crate::plans::discover::default_adapters(),
+            );
+        }
+    }
+    store.mark_startup_scan_complete();
+
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
 

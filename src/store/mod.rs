@@ -70,6 +70,7 @@ pub struct Store {
     /// Notifier woken whenever a new row is appended to the `events` table, so long-poll
     /// subscribers (`Method::Subscribe`) can return promptly without polling.
     pub event_notify: Arc<tokio::sync::Notify>,
+    pub startup_scan_complete: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A synchronous write transaction against a [`Store`].
@@ -160,6 +161,33 @@ pub type EventRow = Event;
 pub type EventRecord = Event;
 
 impl Store {
+    pub fn mark_startup_scan_complete(&self) {
+        self.startup_scan_complete
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn startup_scan_complete(&self) -> bool {
+        self.startup_scan_complete
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn wait_for_startup_scan(
+        &self,
+        _repo: Option<&std::path::Path>,
+        timeout: std::time::Duration,
+    ) -> Result<(), crate::store::StoreError> {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if self.startup_scan_complete() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if self.startup_scan_complete() {
+            return Ok(());
+        }
+        Err(crate::store::StoreError::NotFound(
+            "daemon still syncing; retry".to_string(),
+        ))
+    }
     /// Open (or create and migrate) the database at `path`.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
         Self::open_with(path, StoreOptions::default())
@@ -190,6 +218,7 @@ impl Store {
                 existed: false,
                 writer: Arc::new(Mutex::new(conn)),
                 event_notify: Arc::new(tokio::sync::Notify::new()),
+                startup_scan_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
         }
         match migrations::migrate(&path)? {
@@ -208,6 +237,7 @@ impl Store {
             version,
             existed: true,
             event_notify: Arc::new(tokio::sync::Notify::new()),
+            startup_scan_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 

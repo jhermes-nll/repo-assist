@@ -75,6 +75,7 @@ fn plans_tick_apply_failure_surfaces_error() {
 
     let db = dir.path().join("db.sqlite");
     let store = Store::open(&db).unwrap();
+    store.mark_startup_scan_complete();
     store
         .write(|conn| {
             conn.execute(

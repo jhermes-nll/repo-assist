@@ -359,9 +359,10 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
             serde_json::Value::String(cwd.display().to_string()),
         );
     }
-    let reply = client.call(
+    let reply = client.call_timeout(
         crate::ipc::Method::PlansTick,
         serde_json::Value::Object(params),
+        std::time::Duration::from_secs(5),
     )?;
     match reply {
         crate::ipc::Reply::Result { result, .. } => {

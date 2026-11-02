@@ -284,11 +284,20 @@ async fn dispatch_request(
                 .or_else(|| req.params.get("cwd"))
                 .and_then(Value::as_str)
                 .map(std::path::PathBuf::from);
-            let result = tokio::task::block_in_place(|| {
+            match tokio::task::block_in_place(|| {
                 plans_tick_json(store, plan_id.as_deref(), apply, repo.as_deref())
-            })
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
-            write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+            }) {
+                Ok(result) => {
+                    write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+                }
+                Err(e) => {
+                    write_reply(
+                        stream,
+                        &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } }),
+                    )
+                    .await?;
+                }
+            }
         }
         Method::Plan => {
             match req.params.get("id").and_then(Value::as_str) {
@@ -972,9 +981,9 @@ pub fn plans_tick_json(
         }
         Ok(out)
     })?;
-    // On a fresh daemon the worktrees table is empty (or carries a foreign repo);
-    // sync the repo into the store before reading the plan list so an empty table
-    // cannot masquerade as "0 boxes".
+    // Barrier: do not derive until the daemon's startup scan has completed.
+    store.wait_for_startup_scan(repo_path, std::time::Duration::from_secs(3))?;
+    // Sync path retained for compatibility when a repo is supplied but the scan already done.
     if let Some(rp) = repo_path {
         let rp_s = rp.display().to_string();
         let known = worktrees.iter().any(|(_, p)| p == &rp_s);
