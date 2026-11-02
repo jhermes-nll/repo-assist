@@ -103,7 +103,7 @@ Behaviour implemented and tested:
 
 ---
 
-## Item 3 — pi session `cwd` == worktree path (verified: invariant does not hold; handled ✅)
+## Item 3 — pi session `cwd` == worktree path (handled by design)
 
 The 3 captured sessions all have `"cwd":"/home/jesse"`, which is not any worktree's toplevel (and not
 a git repo), so "session cwd equals a worktree path" does **not** hold for real data.
@@ -134,8 +134,7 @@ Not a data fact: whether checkbox updates a plan author marks `[x]` are committe
 up in `git log <merge_base>..HEAD` on the plan branch. Decision as implemented: we do not silently
 suppress this. `plan.checkbox_mismatch` (`src/checks/plan_checkbox.rs`) reports `declared=open` /
 `observed=committed` and `declared=done` / `observed=not_started` (with `expected_paths` known) at
-severity `warn`, and `ra plan` / `plan.stalled` surface the discrepancy to the human. Revisit the
-evidence confidence (currently `explicit`) if real-world plan data shows noise.
+severity `warn`, and `ra plan` / `plan.stalled` surface the discrepancy to the human. Evidence confidence is `inferred` (PR #9, commit `c2aa80f`), not `explicit`.
 
 ---
 
