@@ -88,7 +88,7 @@ fn plans_tick_syncs_before_list() {
         .unwrap();
 
     // One plans_tick call must sync first, then read list, then derive/tick.
-    let res = plans_tick_json(&store, None, false).unwrap();
+    let res = plans_tick_json(&store, None, false, Some(&wt)).unwrap();
     let boxes = res.get("total_boxes").and_then(|v| v.as_u64()).unwrap_or(0);
     assert_eq!(boxes, 1, "expected one box ticked, got {boxes}: {res}");
 }

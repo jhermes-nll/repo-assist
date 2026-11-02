@@ -89,7 +89,7 @@ fn plans_tick_apply_failure_surfaces_error() {
     let original_mode = std::fs::metadata(&plan_dir).unwrap().permissions().mode();
     std::fs::set_permissions(&plan_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
 
-    let result = plans_tick_json(&store, None, true);
+    let result = plans_tick_json(&store, None, true, Some(&wt));
 
     std::fs::set_permissions(&plan_dir, std::fs::Permissions::from_mode(original_mode)).unwrap();
 

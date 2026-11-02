@@ -353,6 +353,12 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
         params.insert("plan".into(), serde_json::Value::String(p.clone()));
     }
     params.insert("apply".into(), serde_json::Value::Bool(args.apply));
+    if let Ok(cwd) = std::env::current_dir() {
+        params.insert(
+            "repo".into(),
+            serde_json::Value::String(cwd.display().to_string()),
+        );
+    }
     let reply = client.call(
         crate::ipc::Method::PlansTick,
         serde_json::Value::Object(params),

@@ -276,7 +276,17 @@ async fn dispatch_request(
         Method::PlansTick => {
             let plan_id = req.params.get("plan").and_then(Value::as_str).map(String::from);
             let apply = req.params.get("apply").and_then(Value::as_bool).unwrap_or(false);
-            let result = tokio::task::block_in_place(|| plans_tick_json(store, plan_id.as_deref(), apply))
+            let repo = req
+                .params
+                .get("repo")
+                .or_else(|| req.params.get("repo_path"))
+                .or_else(|| req.params.get("path"))
+                .or_else(|| req.params.get("cwd"))
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from);
+            let result = tokio::task::block_in_place(|| {
+                plans_tick_json(store, plan_id.as_deref(), apply, repo.as_deref())
+            })
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
         }
@@ -949,9 +959,10 @@ pub fn plans_tick_json(
     store: &Store,
     plan_filter: Option<&str>,
     apply: bool,
+    repo_path: Option<&std::path::Path>,
 ) -> Result<serde_json::Value, crate::store::StoreError> {
     // Sync each known worktree's plans first, then read the plan list, then derive.
-    let worktrees: Vec<(i64, String)> = store.read(|conn| {
+    let mut worktrees: Vec<(i64, String)> = store.read(|conn| {
         let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
         let mut out = Vec::new();
         for r in stmt.query_map([], |row| {
@@ -961,6 +972,26 @@ pub fn plans_tick_json(
         }
         Ok(out)
     })?;
+    // On a fresh daemon the worktrees table is empty (or carries a foreign repo);
+    // sync the repo into the store before reading the plan list so an empty table
+    // cannot masquerade as "0 boxes".
+    if let Some(rp) = repo_path {
+        let rp_s = rp.display().to_string();
+        let known = worktrees.iter().any(|(_, p)| p == &rp_s);
+        if worktrees.is_empty() || !known {
+            crate::sources::git::sync_worktrees(store, rp)?;
+            worktrees = store.read(|conn| {
+                let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
+                let mut out = Vec::new();
+                for r in stmt.query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })? {
+                    out.push(r?);
+                }
+                Ok(out)
+            })?;
+        }
+    }
     let mut synced_worktrees = std::collections::HashSet::<i64>::new();
     for (wt_id, wt_path) in &worktrees {
         if synced_worktrees.insert(*wt_id) {
