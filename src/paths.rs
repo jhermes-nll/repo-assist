@@ -134,3 +134,21 @@ pub struct StateFiles {
     /// Rolling daemon log.
     pub log: PathBuf,
 }
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::*;
+
+    #[test]
+    fn env_state_dir_falls_back_to_home_when_xdg_empty() {
+        let e = Env::with("/home/u", None, Some(String::from("/run")));
+        assert_eq!(
+            e.state_dir("abc").to_string_lossy(),
+            "/home/u/.local/state/repo-assist/abc"
+        );
+        assert_eq!(
+            e.socket_path("abc").to_string_lossy(),
+            "/run/repo-assist/abc.sock"
+        );
+    }
+}
