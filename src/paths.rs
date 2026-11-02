@@ -26,15 +26,16 @@ pub fn repo_key_from_git_common_dir(common_dir: &Path) -> String {
 
 /// Resolve the git common dir of `repo_root` (Section 4: the repo key is derived from it).
 ///
-/// Shells out to `git rev-parse --absolute-git-common-dir` (always resolved from inside the
-/// repo, so every worktree of one repo returns the same common dir). Returns `None` when
-/// `repo_root` is not inside a git repository.
+/// Shells out to `git rev-parse --git-common-dir` and makes the result absolute (joining
+/// relative results with `repo_root`). `--absolute-git-common-dir` is not available in all
+/// git versions, so we avoid it. Returns `None` when `repo_root` is not inside a git
+/// repository.
 pub fn git_common_dir(repo_root: &Path) -> Option<PathBuf> {
     let out = Command::new("git")
         .arg("-C")
         .arg(repo_root)
         .arg("rev-parse")
-        .arg("--absolute-git-common-dir")
+        .arg("--git-common-dir")
         .output()
         .ok()?;
     if !out.status.success() {
@@ -43,10 +44,14 @@ pub fn git_common_dir(repo_root: &Path) -> Option<PathBuf> {
     let text = String::from_utf8(out.stdout).ok()?;
     let path = text.trim();
     if path.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(path))
+        return None;
     }
+    let p = PathBuf::from(path);
+    Some(if p.is_absolute() {
+        p
+    } else {
+        repo_root.join(p)
+    })
 }
 
 /// Environment inputs used to resolve paths (overridable for tests).

@@ -202,7 +202,32 @@ fn parse_files_decl(line: &str) -> Option<Vec<String>> {
 /// Extract every `` `...` `` span from `s`, cleaning each. Returns `None` when there is no
 /// backticked content at all (so the caller can distinguish "no directive" from "directive
 /// with no path" — both collapse to no paths here).
+/// Extract every `` `...` `` span from `s`, cleaning each. Parenthesised notes (which may
+/// themselves contain backticks) are stripped first so their inline code is not mistaken
+/// for path declarations.
 fn extract_backticked(s: &str) -> Option<Vec<String>> {
+    // Drop parenthesised notes before scanning for backticks.
+    let mut stripped = String::with_capacity(s.len());
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                } else {
+                    stripped.push(c);
+                }
+            }
+            _ => {
+                if depth == 0 {
+                    stripped.push(c);
+                }
+            }
+        }
+    }
+    let s = stripped.as_str();
+
     let mut paths = Vec::new();
     let mut rest = s;
     while let Some(open) = rest.find('`') {
@@ -260,7 +285,13 @@ fn clean_path(inner: &str) -> Option<String> {
         return None;
     }
     // accept only path-like tokens
-    if !p.contains('/') && !p.rsplit('.').next().map(|e| e.len() > 0 && e.chars().all(|c| c.is_ascii_alphanumeric())).unwrap_or(false) {
+    if !p.contains('/')
+        && !p
+            .rsplit('.')
+            .next()
+            .map(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()))
+            .unwrap_or(false)
+    {
         return None;
     }
     Some(p.to_string())
