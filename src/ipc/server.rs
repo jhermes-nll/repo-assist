@@ -954,18 +954,6 @@ pub fn plans_tick_json(
     let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let _ = crate::sources::git::sync_worktrees(store, &repo_root);
 
-    let worktrees = store.read(|conn| {
-        let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
-        let mut out = Vec::new();
-        for r in stmt.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })? {
-            out.push(r?);
-        }
-        Ok(out)
-    })?;
-    let _ = &worktrees;
-
     // Collect plans
     let plans: Vec<(String, String, Option<i64>, Option<String>)> = store.read(|conn| {
         let mut stmt = conn.prepare("SELECT id, file, worktree_id, (SELECT path FROM worktrees WHERE id=plans.worktree_id) FROM plans WHERE state != 'gone'")?;
@@ -982,7 +970,7 @@ pub fn plans_tick_json(
     let mut total_boxes = 0usize;
     let mut skipped_no_paths = 0usize;
 
-    for (plan_id, rel, _wt_id, wt_path) in plans {
+    for (plan_id, rel, wt_id, wt_path) in plans {
         if let Some(f) = plan_filter {
             if plan_id != f && !plan_id.starts_with(f) {
                 continue;
@@ -995,6 +983,14 @@ pub fn plans_tick_json(
                 continue;
             }
         };
+        if let Some(id) = wt_id {
+            let _ = crate::plans::discover::sync_plans(
+                store,
+                id,
+                std::path::Path::new(&wt_path),
+                crate::plans::discover::default_adapters(),
+            );
+        }
         let abs_path = std::path::PathBuf::from(&wt_path).join(&rel);
         let text = match std::fs::read_to_string(&abs_path) {
             Ok(t) => t,
@@ -1057,10 +1053,13 @@ pub fn plans_tick_json(
             ));
         }
         // apply
-        let applied = if apply && !dirty && !lines.is_empty() {
-            crate::plans::tick::apply_atomic(&abs_path, &new_text).is_ok()
+        let (applied, apply_error) = if apply && !dirty && !lines.is_empty() {
+            match crate::plans::tick::apply_atomic(&abs_path, &new_text) {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            }
         } else {
-            false
+            (false, None)
         };
 
         total_boxes += lines.len();
@@ -1074,6 +1073,7 @@ pub fn plans_tick_json(
             "dirty": dirty,
             "skipped_no_expected_paths": all_unknown,
             "applied": applied,
+            "apply_error": apply_error,
             "boxes": lines.len(),
             "tasks": committed_set.len(),
             "diff": diff,

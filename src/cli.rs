@@ -343,6 +343,7 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
         crate::ipc::Reply::Result { result, .. } => {
             // Print per-plan diffs
             if let Some(plans) = result.get("plans").and_then(|v| v.as_array()) {
+                let mut failed_apply = false;
                 for p in plans {
                     let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let dirty = p.get("dirty").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -351,17 +352,20 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
                         println!("skipped {}: uncommitted changes in {}", id, file);
                         continue;
                     }
-                    if p.get("skipped_no_expected_paths")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                    {
-                        // counted globally
+                    if let Some(err) = p.get("apply_error").and_then(|v| v.as_str()) {
+                        if !err.is_empty() {
+                            eprintln!("failed to apply {}: {}", id, err);
+                            failed_apply = true;
+                        }
                     }
                     let diff = p.get("diff").and_then(|v| v.as_str()).unwrap_or("");
                     if !diff.is_empty() {
                         println!("--- {}", id);
                         print!("{}", diff);
                     }
+                }
+                if args.apply && failed_apply {
+                    return Ok(1);
                 }
             }
             let summary = result.get("summary").and_then(|v| v.as_str()).unwrap_or("");

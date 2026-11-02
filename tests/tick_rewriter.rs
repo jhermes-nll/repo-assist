@@ -1,6 +1,7 @@
 mod common;
 
-use repo_assist::plans::tick::{rewrite_lines, tick_one_line};
+use repo_assist::plans::tick::{rewrite_lines, select_tick_lines, tick_one_line};
+use std::collections::BTreeSet;
 
 #[test]
 fn tick_one_line_table() {
@@ -43,4 +44,44 @@ fn rewrite_markdown_link_not_ticked() {
     let text = "- [a](b) link\n- [ ] box\n";
     let out = rewrite_lines(text, &[1]);
     assert_eq!(out, "- [a](b) link\n- [x] box\n");
+}
+
+#[test]
+fn select_tick_sequential_ordinals_match_literal_and_position() {
+    let text = "## Task 1\n- [ ] a\n\n## Task 2\n- [ ] b\n\n## Task 3\n- [ ] c\n";
+    let committed: BTreeSet<usize> = [2].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    let ticked = text.split_inclusive('\n').enumerate()
+        .filter(|(i, _)| lines.contains(i)).map(|(_, l)| l).collect::<String>();
+    assert_eq!(ticked, "- [ ] b\n");
+}
+
+#[test]
+fn select_tick_renumbered_ordinals_are_positional() {
+    let text = "## Task 1\n- [ ] a\n\n## Task 4\n- [ ] b\n\n## Task 9\n- [ ] c\n";
+    let committed: BTreeSet<usize> = [2].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    let ticked = text.split_inclusive('\n').enumerate()
+        .filter(|(i, _)| lines.contains(i)).map(|(_, l)| l).collect::<String>();
+    assert_eq!(ticked, "- [ ] b\n");
+}
+
+#[test]
+fn select_tick_repeated_heading_text_ticks_only_second_block() {
+    let text = "## Task 2\n- [ ] first\n\n## Task 2\n- [ ] second\n";
+    let committed: BTreeSet<usize> = [2].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    let ticked = text.split_inclusive('\n').enumerate()
+        .filter(|(i, _)| lines.contains(i)).map(|(_, l)| l).collect::<String>();
+    assert_eq!(ticked, "- [ ] second\n");
+}
+
+#[test]
+fn select_tick_missing_ordinal_changes_nothing() {
+    let text = "## Task 1\n- [ ] a\n\n## Task 2\n- [ ] b\n";
+    let committed: BTreeSet<usize> = [99].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    assert!(lines.is_empty());
+    let out = rewrite_lines(text, &lines);
+    assert_eq!(out, text);
 }

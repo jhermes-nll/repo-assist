@@ -199,13 +199,18 @@ fn parse_files_decl(line: &str) -> Option<Vec<String>> {
     extract_backticked(rest)
 }
 
-/// Extract every `` `...` `` span from `s`, cleaning each. Returns `None` when there is no
-/// backticked content at all (so the caller can distinguish "no directive" from "directive
-/// with no path" — both collapse to no paths here).
+/// True when `line` is a task heading (`# {2,4} Task \d+...`).
+///
+/// Ordinal identity is positional: both the parser and the tick rewriter count task
+/// headings in document order, so renumbered or repeated task numbers never collide.
+pub fn is_task_heading(line: &str) -> bool {
+    parse_task_heading(line).is_some()
+}
+
 /// Extract every `` `...` `` span from `s`, cleaning each. Parenthesised notes (which may
 /// themselves contain backticks) are stripped first so their inline code is not mistaken
 /// for path declarations.
-fn extract_backticked(s: &str) -> Option<Vec<String>> {
+pub fn extract_backticked(s: &str) -> Option<Vec<String>> {
     // Drop parenthesised notes before scanning for backticks.
     let mut stripped = String::with_capacity(s.len());
     let mut depth = 0i32;

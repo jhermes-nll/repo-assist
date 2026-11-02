@@ -28,58 +28,26 @@ pub fn rewrite_lines(text: &str, to_tick: &[usize]) -> String {
     buf.concat()
 }
 
-fn task_heading_ordinal(line: &str) -> Option<usize> {
-    let t = line.trim();
-    let mut hashes = 0usize;
-    let mut rest = t;
-    while rest.starts_with('#') {
-        hashes += 1;
-        rest = &rest[1..];
-    }
-    if !(2..=4).contains(&hashes) {
-        return None;
-    }
-    let rest = rest.trim_start();
-    let rest = rest.strip_prefix("Task")?;
-    let rest = rest.trim_start();
-    let mut digits = String::new();
-    for b in rest.as_bytes() {
-        if b.is_ascii_digit() {
-            digits.push(*b as char);
-        } else {
-            break;
-        }
-    }
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse().ok()
-}
-
 pub fn select_tick_lines(text: &str, committed: &BTreeSet<usize>) -> Vec<usize> {
     let mut result = Vec::new();
     let mut current_task: Option<usize> = None;
+    let mut task_count = 0usize;
     let mut generic_idx = 0usize;
-    let has_task_headings = text.lines().any(|l| task_heading_ordinal(l).is_some());
+    let has_task_headings = text
+        .lines()
+        .any(crate::plans::superpowers::is_task_heading);
 
     for (i, line) in text.split_inclusive('\n').enumerate() {
-        if let Some(ord) = task_heading_ordinal(line) {
-            current_task = Some(ord);
-            continue;
-        }
-        if !line.starts_with('-') {
+        if crate::plans::superpowers::is_task_heading(line) {
+            task_count += 1;
+            current_task = Some(task_count);
             continue;
         }
         let trimmed = line.trim_start();
-        if !trimmed.starts_with("- [") {
+        if !trimmed.starts_with('-') {
             continue;
         }
-        let marker_ok = {
-            let s = trimmed.strip_prefix('-').unwrap_or("").trim_start();
-            let s = s.strip_prefix('[').unwrap_or("");
-            matches!(s.find(']'), Some(c) if c <= 1)
-        };
-        if !marker_ok {
+        if !trimmed.starts_with("- [") {
             continue;
         }
         if !line.contains("[ ]") {
@@ -113,13 +81,19 @@ pub fn is_git_dirty(wt: &Path, rel: &str) -> bool {
     }
 }
 
+// shortcut: fixed `.planname.tick.tmp` name races between concurrent ticks of the same plan and reuses a crashed prior run's tmp; use a unique temp name (e.g. PID + nonce) if concurrent/atomic-hardening is needed.
 pub fn apply_atomic(path: &Path, new_text: &str) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let tmp = dir.join(format!(
         ".{}.tick.tmp",
         path.file_name().and_then(|s| s.to_str()).unwrap_or("plan")
     ));
+    // Preserve the original file mode so we never widen (e.g. 0600 -> 0644) a plan.
+    let perms = fs::metadata(path).map(|m| m.permissions()).ok();
     fs::write(&tmp, new_text)?;
+    if let Some(p) = perms {
+        let _ = fs::set_permissions(&tmp, p);
+    }
     fs::rename(&tmp, path)?;
     Ok(())
 }
