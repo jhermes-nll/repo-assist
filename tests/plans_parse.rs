@@ -449,3 +449,46 @@ fn unknown_directive_does_not_add_paths() {
         vec!["src/a.rs".to_string(), "src/c.rs".to_string()]
     );
 }
+
+#[test]
+fn real_ai_dashboard_files_line_parses_expected_paths() {
+    let text = "# Plan\n\n## Task 1: foo\n\n**Files:** Modify `src-tauri/src/monitor/mock.rs` (lints at :12 no-Default, :50 + :59 manual `is_multiple_of`, :131 redundant i64 cast), `src-tauri/src/monitor/pi/process.rs:95` (`contains` vs `iter().any`), `src-tauri/src/monitor/pi/mod.rs:29-30` (doc indent) [E46]. **Interfaces:** none\n";
+    let plan = parse_plan(text);
+    assert_eq!(plan.tasks.len(), 1);
+    let paths = &plan.tasks[0].expected_paths;
+
+    assert_eq!(
+        paths,
+        &vec![
+            "src-tauri/src/monitor/mock.rs".to_string(),
+            "src-tauri/src/monitor/pi/process.rs".to_string(),
+            "src-tauri/src/monitor/pi/mod.rs".to_string(),
+        ]
+    );
+
+    let none_text =
+        "# Plan\n\n## Task 1: foo\n\n**Files:** none created/modified — commits only, ...\n";
+    let plan2 = parse_plan(none_text);
+    assert!(plan2.tasks[0].expected_paths.is_empty());
+}
+
+#[test]
+fn extract_backticked_unbalanced_paren_truncates_remainder() {
+    use repo_assist::plans::superpowers::extract_backticked;
+    let got = extract_backticked("`a.rs` (unclosed note with `b.rs`").unwrap();
+    assert_eq!(got, vec!["a.rs".to_string()]);
+}
+
+#[test]
+fn extract_backticked_stray_close_paren_at_depth_zero_is_kept() {
+    use repo_assist::plans::superpowers::extract_backticked;
+    let got = extract_backticked("`a.rs`) stray").unwrap();
+    assert_eq!(got, vec!["a.rs".to_string()]);
+}
+
+#[test]
+fn extract_backticked_multibyte_utf8_inside_parens() {
+    use repo_assist::plans::superpowers::extract_backticked;
+    let got = extract_backticked("(😀 note `hidden.rs`) `visible.rs`").unwrap();
+    assert_eq!(got, vec!["visible.rs".to_string()]);
+}

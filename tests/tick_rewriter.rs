@@ -1,0 +1,193 @@
+mod common;
+
+use repo_assist::plans::tick::{rewrite_lines, select_tick_lines, tick_one_line};
+use std::collections::BTreeSet;
+
+#[test]
+fn tick_one_line_table() {
+    let cases = vec![
+        ("- [ ] foo", Some("- [x] foo")),
+        ("- [x] foo", None),
+        ("- [X] foo", None),
+        ("- [~] foo", None),
+        ("- [~] note [ ] inner", None),
+        ("- [ ]\r\n", Some("- [x]\r\n")),
+        ("  - [ ] nested", Some("  - [x] nested")),
+        ("- [spec](http://x) not box", None),
+        ("- [ ] already? no", Some("- [x] already? no")),
+    ];
+    for (input, want) in cases {
+        assert_eq!(
+            tick_one_line(input),
+            want.map(String::from),
+            "input {}",
+            input
+        );
+    }
+}
+
+#[test]
+fn rewrite_preserves_crlf_and_no_trailing_newline() {
+    let text = "- [ ] a\r\n- [ ] b";
+    let out = rewrite_lines(text, &[0]);
+    assert_eq!(out, "- [x] a\r\n- [ ] b");
+}
+
+#[test]
+fn rewrite_nested_and_already_ticked() {
+    let text = "- [ ] parent\n  - [ ] child\n- [x] done\n";
+    let out = rewrite_lines(text, &[0, 1]);
+    assert_eq!(out, "- [x] parent\n  - [x] child\n- [x] done\n");
+}
+
+#[test]
+fn rewrite_markdown_link_not_ticked() {
+    let text = "- [a](b) link\n- [ ] box\n";
+    let out = rewrite_lines(text, &[1]);
+    assert_eq!(out, "- [a](b) link\n- [x] box\n");
+}
+
+#[test]
+fn select_tick_sequential_ordinals_match_literal_and_position() {
+    let text = "## Task 1\n- [ ] a\n\n## Task 2\n- [ ] b\n\n## Task 3\n- [ ] c\n";
+    let committed: BTreeSet<usize> = [2].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    let ticked = text
+        .split_inclusive('\n')
+        .enumerate()
+        .filter(|(i, _)| lines.contains(i))
+        .map(|(_, l)| l)
+        .collect::<String>();
+    assert_eq!(ticked, "- [ ] b\n");
+}
+
+#[test]
+fn select_tick_renumbered_ordinals_are_positional() {
+    let text = "## Task 1\n- [ ] a\n\n## Task 4\n- [ ] b\n\n## Task 9\n- [ ] c\n";
+    let committed: BTreeSet<usize> = [2].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    let ticked = text
+        .split_inclusive('\n')
+        .enumerate()
+        .filter(|(i, _)| lines.contains(i))
+        .map(|(_, l)| l)
+        .collect::<String>();
+    assert_eq!(ticked, "- [ ] b\n");
+}
+
+#[test]
+fn select_tick_repeated_heading_text_ticks_only_second_block() {
+    let text = "## Task 2\n- [ ] first\n\n## Task 2\n- [ ] second\n";
+    let committed: BTreeSet<usize> = [2].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    let ticked = text
+        .split_inclusive('\n')
+        .enumerate()
+        .filter(|(i, _)| lines.contains(i))
+        .map(|(_, l)| l)
+        .collect::<String>();
+    assert_eq!(ticked, "- [ ] second\n");
+}
+
+#[test]
+fn select_tick_missing_ordinal_changes_nothing() {
+    let text = "## Task 1\n- [ ] a\n\n## Task 2\n- [ ] b\n";
+    let committed: BTreeSet<usize> = [99].into_iter().collect();
+    let lines = select_tick_lines(text, &committed);
+    assert!(lines.is_empty());
+    let out = rewrite_lines(text, &lines);
+    assert_eq!(out, text);
+}
+
+#[test]
+fn select_tick_indented_heading_counts_as_task_case_a() {
+    let text = "# Plan\n## Task 1\n- [ ] a\n    ## Task 2\n- [ ] b\n## Task 3\n- [ ] c\n";
+    let committed: std::collections::BTreeSet<usize> = [2].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(
+        text,
+        &repo_assist::plans::tick::select_tick_lines(text, &committed),
+    );
+    assert_eq!(
+        out,
+        "# Plan\n## Task 1\n- [ ] a\n    ## Task 2\n- [x] b\n## Task 3\n- [ ] c\n"
+    );
+}
+
+#[test]
+fn select_tick_only_indented_heading_does_not_tick_preamble() {
+    let text = "- [ ] preamble\n    ## Task 1\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(
+        text,
+        &repo_assist::plans::tick::select_tick_lines(text, &committed),
+    );
+    assert_eq!(out, "- [ ] preamble\n    ## Task 1\n");
+}
+
+#[test]
+fn select_tick_mix_indented_then_plain_headings() {
+    let text = "    ## Task 1\n- [ ] a\n## Task 2\n- [ ] b\n## Task 3\n- [ ] c\n";
+    let committed: std::collections::BTreeSet<usize> = [2].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(
+        text,
+        &repo_assist::plans::tick::select_tick_lines(text, &committed),
+    );
+    assert_eq!(
+        out,
+        "    ## Task 1\n- [ ] a\n## Task 2\n- [x] b\n## Task 3\n- [ ] c\n"
+    );
+}
+
+#[test]
+fn heading_less_plan_never_ticks() {
+    let text = "- [ ] unrelated item one\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(
+        text,
+        &repo_assist::plans::tick::select_tick_lines(text, &committed),
+    );
+    assert_eq!(out, text);
+}
+
+#[test]
+fn nospace_checkbox_under_committed_task_ticks() {
+    let text = "## Task 1\n-[ ] box\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(
+        text,
+        &repo_assist::plans::tick::select_tick_lines(text, &committed),
+    );
+    assert_eq!(out, "## Task 1\n-[x] box\n");
+}
+
+#[test]
+fn apply_atomic_preserves_symlink_and_updates_target() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+    let target = root.join("target.md");
+    std::fs::write(&target, "# Plan\n- [ ] box\n").unwrap();
+    let link = root.join("link.md");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let new_text = "# Plan\n- [x] box\n";
+    repo_assist::plans::tick::apply_atomic(&link, new_text, Some(root)).unwrap();
+
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), new_text);
+}
+
+#[test]
+fn apply_atomic_deleted_file_errors_and_not_recreated() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+    let path = root.join("plan.md");
+    std::fs::write(&path, "# Plan\n- [ ] box\n").unwrap();
+    std::fs::remove_file(&path).unwrap();
+
+    let res = repo_assist::plans::tick::apply_atomic(&path, "# Plan\n- [x] box\n", Some(root));
+    assert!(res.is_err());
+    assert!(!path.exists());
+}

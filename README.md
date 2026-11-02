@@ -66,6 +66,7 @@ pi session root resolution: `$PI_CODING_AGENT_SESSION_DIR` if set; else `${PI_CO
 | `ra status` / `ra status --json` | one-screen summary |
 | `ra worktrees` | branches, ahead/behind, changed-file counts |
 | `ra plans` / `ra plan <id>` | plan and task listing |
+| `ra plans tick [--plan <id>] [--apply]` | tick plan checkboxes from git evidence (dry-run by default; dirty plans skipped) |
 | `ra drift` | unignored changed files no task expects |
 | `ra conflicts` | worktree + plan overlaps, merge conflicts |
 | `ra who-touches <path>` | who touches a path |

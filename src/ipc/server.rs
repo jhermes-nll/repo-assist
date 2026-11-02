@@ -273,6 +273,32 @@ async fn dispatch_request(
                 .await?,
             }
         }
+        Method::PlansTick => {
+            let plan_id = req.params.get("plan").and_then(Value::as_str).map(String::from);
+            let apply = req.params.get("apply").and_then(Value::as_bool).unwrap_or(false);
+            let repo = req
+                .params
+                .get("repo")
+                .or_else(|| req.params.get("repo_path"))
+                .or_else(|| req.params.get("path"))
+                .or_else(|| req.params.get("cwd"))
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from);
+            match tokio::task::block_in_place(|| {
+                plans_tick_json(store, plan_id.as_deref(), apply, repo.as_deref())
+            }) {
+                Ok(result) => {
+                    write_reply(stream, &json!({ "id": req.id, "result": result })).await?;
+                }
+                Err(e) => {
+                    write_reply(
+                        stream,
+                        &json!({ "id": req.id, "error": { "code": "store_error", "message": e.to_string() } }),
+                    )
+                    .await?;
+                }
+            }
+        }
         Method::Plan => {
             match req.params.get("id").and_then(Value::as_str) {
                 None => write_reply(
@@ -935,4 +961,203 @@ fn ack_json(store: &Store, params: &Value) -> Result<Value, crate::store::StoreE
     let now = crate::sources::git::now_ms();
     let ok = store.ack_finding(&id, now)?;
     Ok(json!({ "ok": ok, "id": id }))
+}
+
+/// Tick plan checkboxes based on derived observed state.
+pub fn plans_tick_json(
+    store: &Store,
+    plan_filter: Option<&str>,
+    apply: bool,
+    repo_path: Option<&std::path::Path>,
+) -> Result<serde_json::Value, crate::store::StoreError> {
+    // Sync each known worktree's plans first, then read the plan list, then derive.
+    let mut worktrees: Vec<(i64, String)> = store.read(|conn| {
+        let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
+        let mut out = Vec::new();
+        for r in stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })? {
+            out.push(r?);
+        }
+        Ok(out)
+    })?;
+    // Barrier: do not derive until the daemon's startup scan has completed.
+    store.wait_for_startup_scan(repo_path, std::time::Duration::from_secs(3))?;
+    // Sync path retained for compatibility when a repo is supplied but the scan already done.
+    if let Some(rp) = repo_path {
+        let rp_s = rp.display().to_string();
+        let known = worktrees.iter().any(|(_, p)| p == &rp_s);
+        if worktrees.is_empty() || !known {
+            crate::sources::git::sync_worktrees(store, rp)?;
+            worktrees = store.read(|conn| {
+                let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
+                let mut out = Vec::new();
+                for r in stmt.query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })? {
+                    out.push(r?);
+                }
+                Ok(out)
+            })?;
+        }
+    }
+    let mut synced_worktrees = std::collections::HashSet::<i64>::new();
+    for (wt_id, wt_path) in &worktrees {
+        if synced_worktrees.insert(*wt_id) {
+            crate::plans::discover::sync_plans(
+                store,
+                *wt_id,
+                std::path::Path::new(wt_path),
+                crate::plans::discover::default_adapters(),
+            )?;
+        }
+    }
+
+    // Collect plans
+    let plans: Vec<(String, String, Option<i64>, Option<String>)> = store.read(|conn| {
+        let mut stmt = conn.prepare("SELECT id, file, worktree_id, (SELECT path FROM worktrees WHERE id=plans.worktree_id) FROM plans WHERE state != 'gone'")?;
+        let mut out = Vec::new();
+        for r in stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default(), row.get::<_, Option<i64>>(2)?, row.get::<_, Option<String>>(3)?))
+        })? {
+            out.push(r?);
+        }
+        Ok(out)
+    })?;
+
+    if let Some(f) = plan_filter {
+        if f.is_empty() {
+            return Err(crate::store::StoreError::NotFound(
+                "plan id must be non-empty".to_string(),
+            ));
+        }
+    }
+    let mut out_plans = Vec::new();
+    let mut total_boxes = 0usize;
+    let mut matched_plan = false;
+    let mut skipped_no_paths = 0usize;
+
+    for (plan_id, rel, _wt_id, wt_path) in plans {
+        if let Some(f) = plan_filter {
+            if plan_id != f && !plan_id.starts_with(f) {
+                continue;
+            }
+        }
+        matched_plan = true;
+        let wt_path = match wt_path {
+            Some(p) => p,
+            None => {
+                out_plans.push(serde_json::json!({"id": plan_id, "skipped": true, "skip_reason": "no worktree", "boxes":0,"tasks":0,"diff":""}));
+                continue;
+            }
+        };
+        let abs_path = std::path::PathBuf::from(&wt_path).join(&rel);
+        let text = match std::fs::read_to_string(&abs_path) {
+            Ok(t) => t,
+            Err(e) => {
+                out_plans.push(serde_json::json!({"id": plan_id, "file": rel, "worktree": wt_path, "skipped": true, "skip_reason": format!("read error: {e}"), "boxes":0,"tasks":0,"diff":""}));
+                continue;
+            }
+        };
+
+        // observed per task from store
+        let tasks: Vec<(i64, String)> = store.read(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ordinal, observed FROM tasks WHERE plan_id = ?1 ORDER BY ordinal",
+            )?;
+            let mut out = Vec::new();
+            for r in stmt.query_map([plan_id.as_str()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })? {
+                out.push(r?);
+            }
+            Ok(out)
+        })?;
+        let mut committed_set = std::collections::BTreeSet::new();
+        for (ord, obs) in &tasks {
+            if obs == "committed" {
+                committed_set.insert(*ord as usize);
+            }
+        }
+        // skipped if no expected paths: all tasks unknown
+        let all_unknown = !tasks.is_empty() && tasks.iter().all(|(_, o)| o == "unknown");
+        if all_unknown {
+            skipped_no_paths += 1;
+        }
+
+        let dirty = crate::plans::tick::is_git_dirty(std::path::Path::new(&wt_path), &rel);
+        let lines = crate::plans::tick::select_tick_lines(&text, &committed_set);
+        // generate diff
+        let new_text = crate::plans::tick::rewrite_lines(&text, &lines);
+        let mut diff = String::new();
+        for &ln in &lines {
+            // find old line
+            let old_line = text
+                .split_inclusive('\n')
+                .nth(ln)
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .trim_end_matches('\r');
+            let new_line = new_text
+                .split_inclusive('\n')
+                .nth(ln)
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .trim_end_matches('\r');
+            diff.push_str(&format!(
+                "@@ -{},1 +{},1 @@\n-{}\n+{}\n",
+                ln + 1,
+                ln + 1,
+                old_line,
+                new_line
+            ));
+        }
+        // apply
+        let (applied, apply_error) = if apply && !dirty && !lines.is_empty() {
+            match crate::plans::tick::apply_atomic(
+                &abs_path,
+                &new_text,
+                Some(std::path::Path::new(&wt_path)),
+            ) {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            }
+        } else {
+            (false, None)
+        };
+
+        total_boxes += lines.len();
+        out_plans.push(serde_json::json!({
+            "id": plan_id,
+            "file": rel,
+            "worktree": wt_path,
+            "dirty": dirty,
+            "skipped_no_expected_paths": all_unknown,
+            "applied": applied,
+            "apply_error": apply_error,
+            "boxes": lines.len(),
+            "tasks": crate::plans::tick::ticked_task_count(&text, &lines),
+            "diff": diff,
+        }));
+    }
+
+    let total_tasks: usize = out_plans
+        .iter()
+        .filter(|p| p.get("boxes").and_then(|v| v.as_u64()).unwrap_or(0) > 0)
+        .map(|p| p.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0) as usize)
+        .sum();
+
+    if !matched_plan {
+        if let Some(f) = plan_filter {
+            return Err(crate::store::StoreError::NotFound(f.to_string()));
+        }
+    }
+    let summary = format!("{} boxes in {} tasks", total_boxes, total_tasks);
+    Ok(serde_json::json!({
+        "plans": out_plans,
+        "total_boxes": total_boxes,
+        "total_tasks": total_tasks,
+        "skipped_no_expected_paths": skipped_no_paths,
+        "summary": summary,
+    }))
 }

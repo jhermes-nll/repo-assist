@@ -55,11 +55,33 @@ pub struct WorktreesArgs {
     pub json: bool,
 }
 
+/// Options for `ra plans tick`.
+#[derive(Args, Debug, Default)]
+pub struct TickArgs {
+    /// Tick only this plan id.
+    #[arg(long)]
+    pub plan: Option<String>,
+
+    /// Apply changes instead of dry-run.
+    #[arg(long)]
+    pub apply: bool,
+}
+
 /// Plans with declared vs observed progress; detail lists tasks and evidence.
 #[derive(Args, Debug, Default)]
 pub struct PlansArgs {
+    /// Subcommand (currently `tick`).
+    #[command(subcommand)]
+    pub command: Option<PlansCommand>,
+
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PlansCommand {
+    /// Tick checkboxes for committed work.
+    Tick(TickArgs),
 }
 
 /// A single plan by id, listing its tasks and evidence.
@@ -286,6 +308,9 @@ pub fn run(cli: Cli) -> Result<i32, anyhow::Error> {
 
 /// `ra plans`: list plans (Task 2.4) — auto-spawns the daemon, then prints a table or JSON.
 fn run_plans(args: &PlansArgs) -> Result<i32, anyhow::Error> {
+    if let Some(PlansCommand::Tick(tick)) = &args.command {
+        return run_plans_tick(tick);
+    }
     let mut client = resolve_and_connect(true)?;
     let reply = client.call(crate::ipc::Method::Plans, serde_json::Value::Null)?;
     match reply {
@@ -295,6 +320,87 @@ fn run_plans(args: &PlansArgs) -> Result<i32, anyhow::Error> {
             } else {
                 print_plans_human(&result);
             }
+        }
+        crate::ipc::Reply::Error { error, .. } => {
+            anyhow::bail!("daemon error [{}]: {}", error.code, error.message);
+        }
+    }
+    Ok(0)
+}
+
+/// Pure exit-code policy for `ra plans tick` (testable without a daemon): non-zero iff
+/// `--apply` was requested and at least one plan carries a non-empty `apply_error`.
+pub fn plans_tick_exit_code(result: &serde_json::Value, apply: bool) -> i32 {
+    if !apply {
+        return 0;
+    }
+    if let Some(plans) = result.get("plans").and_then(|v| v.as_array()) {
+        for p in plans {
+            if let Some(err) = p.get("apply_error").and_then(|v| v.as_str()) {
+                if !err.is_empty() {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
+fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
+    let mut client = resolve_and_connect(true)?;
+    let mut params = serde_json::Map::new();
+    if let Some(p) = &args.plan {
+        params.insert("plan".into(), serde_json::Value::String(p.clone()));
+    }
+    params.insert("apply".into(), serde_json::Value::Bool(args.apply));
+    if let Ok(cwd) = std::env::current_dir() {
+        params.insert(
+            "repo".into(),
+            serde_json::Value::String(cwd.display().to_string()),
+        );
+    }
+    let reply = client.call_timeout(
+        crate::ipc::Method::PlansTick,
+        serde_json::Value::Object(params),
+        std::time::Duration::from_secs(5),
+    )?;
+    match reply {
+        crate::ipc::Reply::Result { result, .. } => {
+            // Print per-plan diffs
+            if let Some(plans) = result.get("plans").and_then(|v| v.as_array()) {
+                for p in plans {
+                    let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let dirty = p.get("dirty").and_then(|v| v.as_bool()).unwrap_or(false);
+                    if dirty {
+                        let file = p.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                        println!("skipped {}: uncommitted changes in {}", id, file);
+                        continue;
+                    }
+                    if let Some(err) = p.get("apply_error").and_then(|v| v.as_str()) {
+                        if !err.is_empty() {
+                            eprintln!("failed to apply {}: {}", id, err);
+                        }
+                    }
+                    let file = p.get("file").and_then(|v| v.as_str()).unwrap_or("");
+                    let diff = p.get("diff").and_then(|v| v.as_str()).unwrap_or("");
+                    if !diff.is_empty() {
+                        println!("--- {}", file);
+                        print!("{}", diff);
+                    }
+                }
+                if crate::cli::plans_tick_exit_code(&result, args.apply) == 1 {
+                    return Ok(1);
+                }
+            }
+            let summary = result.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let skipped = result
+                .get("skipped_no_expected_paths")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if skipped > 0 {
+                println!("{} plans skipped: no expected paths", skipped);
+            }
+            println!("{}", summary);
         }
         crate::ipc::Reply::Error { error, .. } => {
             anyhow::bail!("daemon error [{}]: {}", error.code, error.message);

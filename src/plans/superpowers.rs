@@ -77,6 +77,9 @@ pub fn parse(text: &str) -> ParsedPlan {
             if let Some(paths) = parse_path_decl(trimmed) {
                 cur_paths.extend(paths.into_iter().filter(|p| !p.is_empty()));
             }
+            if let Some(paths) = parse_files_decl(trimmed) {
+                cur_paths.extend(paths.into_iter().filter(|p| !p.is_empty()));
+            }
         }
     }
     if have_task {
@@ -178,10 +181,58 @@ fn parse_path_decl(line: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Extract every `` `...` `` span from `s`, cleaning each. Returns `None` when there is no
-/// backticked content at all (so the caller can distinguish "no directive" from "directive
-/// with no path" — both collapse to no paths here).
-fn extract_backticked(s: &str) -> Option<Vec<String>> {
+/// Parse a `**Files:** ...` (or `Files: ...`) declaration into cleaned paths.
+fn parse_files_decl(line: &str) -> Option<Vec<String>> {
+    let s = line.trim();
+    let lower = s.to_ascii_lowercase();
+    let rest = if let Some(r) = s.strip_prefix("**Files:**") {
+        r
+    } else if let Some(r) = s.strip_prefix("**Files**:") {
+        r
+    } else if let Some(r) = s.strip_prefix("Files:") {
+        r
+    } else if lower.starts_with("files:") {
+        &s[6..]
+    } else {
+        return None;
+    };
+    extract_backticked(rest)
+}
+
+/// True when `line` is a task heading (`# {2,4} Task \d+...`).
+///
+/// Ordinal identity is positional: both the parser and the tick rewriter count task
+/// headings in document order, so renumbered or repeated task numbers never collide.
+pub fn is_task_heading(line: &str) -> bool {
+    parse_task_heading(line.trim()).is_some()
+}
+
+/// Extract every `` `...` `` span from `s`, cleaning each. Parenthesised notes (which may
+/// themselves contain backticks) are stripped first so their inline code is not mistaken
+/// for path declarations.
+pub fn extract_backticked(s: &str) -> Option<Vec<String>> {
+    // Drop parenthesised notes before scanning for backticks.
+    let mut stripped = String::with_capacity(s.len());
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                } else {
+                    stripped.push(c);
+                }
+            }
+            _ => {
+                if depth == 0 {
+                    stripped.push(c);
+                }
+            }
+        }
+    }
+    let s = stripped.as_str();
+
     let mut paths = Vec::new();
     let mut rest = s;
     while let Some(open) = rest.find('`') {
@@ -209,12 +260,22 @@ fn extract_backticked(s: &str) -> Option<Vec<String>> {
 /// Clean a single backticked path: strip a trailing `(notes)` note and a trailing `:line` /
 /// `:line-line` range. Returns `None` when nothing meaningful remains.
 fn clean_path(inner: &str) -> Option<String> {
-    let mut p = inner.trim();
+    let inner = inner.trim();
+    if inner.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let mut p = inner;
 
     // Drop a trailing parenthetical note, e.g. "src/foo.rs (add caching)".
     if let Some(b) = p.find('(') {
         p = &p[..b];
     }
+    // After dropping the note the remaining path must have no spaces.
+    let p = p.trim();
+    if p.contains(' ') {
+        return None;
+    }
+    let mut p = p;
 
     // Drop a trailing ":12" or ":12-34" line-range suffix.
     if let Some(colon) = p.rfind(':') {
@@ -226,10 +287,19 @@ fn clean_path(inner: &str) -> Option<String> {
 
     let p = p.trim();
     if p.is_empty() {
-        None
-    } else {
-        Some(p.to_string())
+        return None;
     }
+    // accept only path-like tokens
+    if !p.contains('/')
+        && !p
+            .rsplit('.')
+            .next()
+            .map(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()))
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    Some(p.to_string())
 }
 
 /// Whether `s` is a `NN` or `NN-MM` line range.
