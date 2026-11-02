@@ -950,9 +950,28 @@ pub fn plans_tick_json(
     plan_filter: Option<&str>,
     apply: bool,
 ) -> Result<serde_json::Value, crate::store::StoreError> {
-    // Fresh sync like daemon ticker but immediate.
-    let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let _ = crate::sources::git::sync_worktrees(store, &repo_root);
+    // Sync each known worktree's plans first, then read the plan list, then derive.
+    let worktrees: Vec<(i64, String)> = store.read(|conn| {
+        let mut stmt = conn.prepare("SELECT id, path FROM worktrees")?;
+        let mut out = Vec::new();
+        for r in stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })? {
+            out.push(r?);
+        }
+        Ok(out)
+    })?;
+    let mut synced_worktrees = std::collections::HashSet::<i64>::new();
+    for (wt_id, wt_path) in &worktrees {
+        if synced_worktrees.insert(*wt_id) {
+            crate::plans::discover::sync_plans(
+                store,
+                *wt_id,
+                std::path::Path::new(wt_path),
+                crate::plans::discover::default_adapters(),
+            )?;
+        }
+    }
 
     // Collect plans
     let plans: Vec<(String, String, Option<i64>, Option<String>)> = store.read(|conn| {
@@ -966,17 +985,25 @@ pub fn plans_tick_json(
         Ok(out)
     })?;
 
+    if let Some(f) = plan_filter {
+        if f.is_empty() {
+            return Err(crate::store::StoreError::NotFound(
+                "plan id must be non-empty".to_string(),
+            ));
+        }
+    }
     let mut out_plans = Vec::new();
     let mut total_boxes = 0usize;
-    let mut synced_worktrees = std::collections::HashSet::<i64>::new();
+    let mut matched_plan = false;
     let mut skipped_no_paths = 0usize;
 
-    for (plan_id, rel, wt_id, wt_path) in plans {
+    for (plan_id, rel, _wt_id, wt_path) in plans {
         if let Some(f) = plan_filter {
             if plan_id != f && !plan_id.starts_with(f) {
                 continue;
             }
         }
+        matched_plan = true;
         let wt_path = match wt_path {
             Some(p) => p,
             None => {
@@ -984,16 +1011,6 @@ pub fn plans_tick_json(
                 continue;
             }
         };
-        if let Some(id) = wt_id {
-            if synced_worktrees.insert(id) {
-                let _ = crate::plans::discover::sync_plans(
-                    store,
-                    id,
-                    std::path::Path::new(&wt_path),
-                    crate::plans::discover::default_adapters(),
-                );
-            }
-        }
         let abs_path = std::path::PathBuf::from(&wt_path).join(&rel);
         let text = match std::fs::read_to_string(&abs_path) {
             Ok(t) => t,
@@ -1057,7 +1074,11 @@ pub fn plans_tick_json(
         }
         // apply
         let (applied, apply_error) = if apply && !dirty && !lines.is_empty() {
-            match crate::plans::tick::apply_atomic(&abs_path, &new_text) {
+            match crate::plans::tick::apply_atomic(
+                &abs_path,
+                &new_text,
+                Some(std::path::Path::new(&wt_path)),
+            ) {
                 Ok(()) => (true, None),
                 Err(e) => (false, Some(e.to_string())),
             }
@@ -1066,9 +1087,6 @@ pub fn plans_tick_json(
         };
 
         total_boxes += lines.len();
-        // tasks ticked: number of distinct committed tasks that had at least one line
-        // approximate = committed_set len if lines nonempty
-
         out_plans.push(serde_json::json!({
             "id": plan_id,
             "file": rel,
@@ -1078,19 +1096,22 @@ pub fn plans_tick_json(
             "applied": applied,
             "apply_error": apply_error,
             "boxes": lines.len(),
-            "tasks": committed_set.len(),
+            "tasks": crate::plans::tick::ticked_task_count(&text, &lines),
             "diff": diff,
         }));
     }
 
-    // fix total_tasks: count tasks that had any ticked box per plan? Recompute from boxes? We'll instead count distinct tasks with committed & lines.
-    // Recompute total_tasks as sum of plans.tasks where boxes>0
     let total_tasks: usize = out_plans
         .iter()
         .filter(|p| p.get("boxes").and_then(|v| v.as_u64()).unwrap_or(0) > 0)
         .map(|p| p.get("tasks").and_then(|v| v.as_u64()).unwrap_or(0) as usize)
         .sum();
 
+    if !matched_plan {
+        if let Some(f) = plan_filter {
+            return Err(crate::store::StoreError::NotFound(f.to_string()));
+        }
+    }
     let summary = format!("{} boxes in {} tasks", total_boxes, total_tasks);
     Ok(serde_json::json!({
         "plans": out_plans,

@@ -328,7 +328,6 @@ fn run_plans(args: &PlansArgs) -> Result<i32, anyhow::Error> {
     Ok(0)
 }
 
-
 /// Pure exit-code policy for `ra plans tick` (testable without a daemon): non-zero iff
 /// `--apply` was requested and at least one plan carries a non-empty `apply_error`.
 pub fn plans_tick_exit_code(result: &serde_json::Value, apply: bool) -> i32 {
@@ -375,9 +374,10 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
                             eprintln!("failed to apply {}: {}", id, err);
                         }
                     }
+                    let file = p.get("file").and_then(|v| v.as_str()).unwrap_or("");
                     let diff = p.get("diff").and_then(|v| v.as_str()).unwrap_or("");
                     if !diff.is_empty() {
-                        println!("--- {}", id);
+                        println!("--- {}", file);
                         print!("{}", diff);
                     }
                 }

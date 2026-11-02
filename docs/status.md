@@ -72,7 +72,7 @@ Public store methods (subset): `open` / `open_with`, `read`, `write`, `append_ev
 
 ## RPC methods (per `src/ipc/server.rs`)
 
-Implemented: `Hello`, `Ping`, `Status`, `Shutdown`, `Plans`, `Plan`, `Drift`, `Sessions`, `Worktrees`, `Conflicts`, `WhoTouches`, `Findings`, `Ack`, `RenderViews`, `Subscribe`.
+Implemented: `Hello`, `Ping`, `Status`, `Shutdown`, `Plans`, `Plan`, `Drift`, `Sessions`, `Worktrees`, `Conflicts`, `WhoTouches`, `Findings`, `Ack`, `RenderViews`, `Subscribe`, `PlansTick`.
 Not exposed as RPC (run locally by CLI): `Doctor`.
 
 ## Test suite (all green)

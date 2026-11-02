@@ -27,6 +27,9 @@ pub enum StoreError {
     /// The single writer connection mutex was poisoned by a previous panic.
     #[error("store writer mutex poisoned")]
     Poisoned,
+    /// Requested plan id was not found.
+    #[error("unknown plan id: {0}")]
+    NotFound(String),
 }
 
 /// The schema version applied to every freshly created database.
