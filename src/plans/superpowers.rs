@@ -157,8 +157,33 @@ fn parse_task_heading(line: &str) -> Option<(String, String)> {
 
 /// Parse a path-declaration line (e.g. `Create: `src/foo.rs` (add caching)) into cleaned
 /// path(s). Returns `None` when the line is not a recognized directive, or has no path.
+fn strip_bullet_prefix(s: &str) -> &str {
+    let mut s = s.trim();
+    loop {
+        let t = s.trim_start();
+        if t.len() != s.len() {
+            s = t;
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix('-') {
+            s = rest.trim_start();
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix('*') {
+            s = rest.trim_start();
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix('+') {
+            s = rest.trim_start();
+            continue;
+        }
+        break;
+    }
+    s
+}
+
 fn parse_path_decl(line: &str) -> Option<Vec<String>> {
-    let s = line.trim();
+    let s = strip_bullet_prefix(line);
 
     // Leading word (the directive keyword).
     let mut kw_end = 0usize;
@@ -183,7 +208,7 @@ fn parse_path_decl(line: &str) -> Option<Vec<String>> {
 
 /// Parse a `**Files:** ...` (or `Files: ...`) declaration into cleaned paths.
 fn parse_files_decl(line: &str) -> Option<Vec<String>> {
-    let s = line.trim();
+    let s = strip_bullet_prefix(line);
     let lower = s.to_ascii_lowercase();
     let rest = if let Some(r) = s.strip_prefix("**Files:**") {
         r
