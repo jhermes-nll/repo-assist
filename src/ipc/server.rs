@@ -1089,7 +1089,21 @@ pub fn plans_tick_json(
 
         let dirty = crate::plans::tick::is_git_dirty(std::path::Path::new(&wt_path), &rel);
         let lines = crate::plans::tick::select_tick_lines(&text, &committed_set);
-        if committed_count > 0 && (lines.is_empty() || lines.len() != committed_count) {
+        let mut task_has_box: Vec<bool> = Vec::new();
+        for l in text.lines() {
+            if crate::plans::superpowers::is_task_heading(l) {
+                task_has_box.push(false);
+            } else if crate::plans::parse_checkbox(l).is_some() {
+                if let Some(last) = task_has_box.last_mut() {
+                    *last = true;
+                }
+            }
+        }
+        if committed_count > 0
+            && committed_set
+                .iter()
+                .any(|&o| o == 0 || o > task_has_box.len() || !task_has_box[o - 1])
+        {
             committed_mismatch = true;
         }
         // generate diff
@@ -1158,8 +1172,8 @@ pub fn plans_tick_json(
         }
     }
     if committed_mismatch {
-        return Err(crate::store::StoreError::NotFound(
-            "committed tasks present but derived box count mismatched or zero".to_string(),
+        return Err(crate::store::StoreError::Mismatch(
+            "no checkboxes derived from plan text".to_string(),
         ));
     }
     let summary = format!("{} boxes in {} tasks", total_boxes, total_tasks);

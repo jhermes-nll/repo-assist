@@ -155,8 +155,6 @@ fn parse_task_heading(line: &str) -> Option<(String, String)> {
     Some((digits, title))
 }
 
-/// Parse a path-declaration line (e.g. `Create: `src/foo.rs` (add caching)) into cleaned
-/// path(s). Returns `None` when the line is not a recognized directive, or has no path.
 fn strip_bullet_prefix(s: &str) -> &str {
     let mut s = s.trim();
     loop {
@@ -165,16 +163,14 @@ fn strip_bullet_prefix(s: &str) -> &str {
             s = t;
             continue;
         }
-        if let Some(rest) = t.strip_prefix('-') {
-            s = rest.trim_start();
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix('*') {
-            s = rest.trim_start();
-            continue;
-        }
-        if let Some(rest) = t.strip_prefix('+') {
-            s = rest.trim_start();
+        let bytes = t.as_bytes();
+        // Only strip a bullet marker when it is followed by whitespace, so that
+        // markdown bold (`**Files:**`) is not mangled into `Files**:` etc.
+        if bytes.len() >= 2
+            && (bytes[0] == b'-' || bytes[0] == b'*' || bytes[0] == b'+')
+            && bytes[1].is_ascii_whitespace()
+        {
+            s = t[1..].trim_start();
             continue;
         }
         break;
@@ -182,6 +178,8 @@ fn strip_bullet_prefix(s: &str) -> &str {
     s
 }
 
+/// Parse a path-declaration line (e.g. `Create: `src/foo.rs` (add caching)) into cleaned
+/// path(s). Returns `None` when the line is not a recognized directive, or has no path.
 fn parse_path_decl(line: &str) -> Option<Vec<String>> {
     let s = strip_bullet_prefix(line);
 

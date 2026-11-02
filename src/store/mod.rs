@@ -30,6 +30,9 @@ pub enum StoreError {
     /// Requested plan id was not found.
     #[error("unknown plan id: {0}")]
     NotFound(String),
+    /// Committed tasks present but plan text yields no checkboxes.
+    #[error("committed tasks present but plan text yields no checkboxes: {0}")]
+    Mismatch(String),
 }
 
 /// The schema version applied to every freshly created database.

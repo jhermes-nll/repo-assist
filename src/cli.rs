@@ -331,29 +331,6 @@ fn run_plans(args: &PlansArgs) -> Result<i32, anyhow::Error> {
 /// Pure exit-code policy for `ra plans tick` (testable without a daemon): non-zero iff
 /// `--apply` was requested and at least one plan carries a non-empty `apply_error`.
 pub fn plans_tick_exit_code(result: &serde_json::Value, apply: bool) -> i32 {
-    // Loud guard: a committed-task / derived-box mismatch is a failure even on dry runs.
-    if let Some(v) = result.get("committed_mismatch").and_then(|v| v.as_bool()) {
-        if v {
-            return 1;
-        }
-    }
-    if result.get("error").is_some() || result.get("guard_error").is_some() || result.get("warning").is_some() {
-        return 1;
-    }
-    if let Some(summary) = result.get("summary").and_then(|v| v.as_str()) {
-        let l = summary.to_ascii_lowercase();
-        if l.contains("mismatch") || l.contains("committed") {
-            return 1;
-        }
-    }
-    if let (Some(total_boxes), Some(committed)) = (
-        result.get("total_boxes").and_then(|v| v.as_u64()),
-        result.get("committed_tasks").and_then(|v| v.as_u64()),
-    ) {
-        if committed > 0 && total_boxes == 0 {
-            return 1;
-        }
-    }
     if !apply {
         return 0;
     }

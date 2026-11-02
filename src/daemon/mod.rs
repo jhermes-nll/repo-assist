@@ -41,11 +41,6 @@ pub struct DaemonState {
     pub env: Env,
 }
 
-/// Run the daemon for the repository containing `repo_root` (Section 6).
-///
-/// Resolves the repo key, (re)creates the socket while holding the pidfile lock, opens (and
-/// migrates if needed) the store, then runs the IPC accept loop until a SIGINT/SIGTERM is
-/// received or a `shutdown` IPC request arrives (Section 6: graceful shutdown).
 /// Initial startup scan: sync worktrees + plans. Marks the store's startup-scan
 /// barrier complete only when every step succeeds; returns an error otherwise (and
 /// leaves the barrier unset so the tick path surfaces the failure).
@@ -71,22 +66,11 @@ pub fn startup_scan(
     Ok(())
 }
 
-/// Alias kept for callers that name the entry point differently.
-pub fn run_startup_scan(
-    store: &crate::store::Store,
-    repo_root: &std::path::Path,
-) -> Result<(), std::io::Error> {
-    startup_scan(store, repo_root)
-}
-
-/// Alias kept for callers that name the entry point differently.
-pub fn initial_startup_scan(
-    store: &crate::store::Store,
-    repo_root: &std::path::Path,
-) -> Result<(), std::io::Error> {
-    startup_scan(store, repo_root)
-}
-
+/// Run the daemon for the repository containing `repo_root` (Section 6).
+///
+/// Resolves the repo key, (re)creates the socket while holding the pidfile lock, opens (and
+/// migrates if needed) the store, then runs the IPC accept loop until a SIGINT/SIGTERM is
+/// received or a `shutdown` IPC request arrives (Section 6: graceful shutdown).
 pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), std::io::Error> {
     let repo_key = state.repo_key.clone();
     let StateFiles { db, pid, .. } = state.state;
@@ -144,7 +128,9 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     // Initial startup scan: sync worktrees + plans before serving ticks (barrier signal).
     // Do NOT mark complete unless every sync step succeeded; a failure leaves the barrier
     // unset so the tick path surfaces it (wait_for_startup_scan returns an error).
-    let _ = crate::daemon::startup_scan(&*store, repo_root);
+    if let Err(e) = crate::daemon::startup_scan(&store, repo_root) {
+        tracing::error!("startup scan failed, tick barrier left unset: {e}");
+    }
 
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
