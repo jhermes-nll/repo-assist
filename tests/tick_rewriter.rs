@@ -109,3 +109,35 @@ fn select_tick_mix_indented_then_plain_headings() {
     let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
     assert_eq!(out, "    ## Task 1\n- [ ] a\n## Task 2\n- [x] b\n## Task 3\n- [ ] c\n");
 }
+
+#[test]
+fn generic_checked_does_not_desync() {
+    let text = "- [x] done\n- [ ] todo\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "- [x] done\n- [ ] todo\n");
+}
+
+#[test]
+fn generic_mixed_checked_ordinals_ticks_correct_box() {
+    let text = "- [x] a\n- [x] b\n- [ ] c\n- [ ] d\n";
+    let committed: std::collections::BTreeSet<usize> = [3].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "- [x] a\n- [x] b\n- [x] c\n- [ ] d\n");
+}
+
+#[test]
+fn generic_indented_checkbox_matches_checklist_column_zero_rule() {
+    let text = "  - [ ] todo\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "  - [ ] todo\n");
+}
+
+#[test]
+fn nospace_checkbox_under_committed_task_ticks() {
+    let text = "## Task 1\n-[ ] box\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "## Task 1\n-[x] box\n");
+}
