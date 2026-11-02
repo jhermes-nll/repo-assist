@@ -968,6 +968,7 @@ pub fn plans_tick_json(
 
     let mut out_plans = Vec::new();
     let mut total_boxes = 0usize;
+    let mut synced_worktrees = std::collections::HashSet::<i64>::new();
     let mut skipped_no_paths = 0usize;
 
     for (plan_id, rel, wt_id, wt_path) in plans {
@@ -984,12 +985,14 @@ pub fn plans_tick_json(
             }
         };
         if let Some(id) = wt_id {
-            let _ = crate::plans::discover::sync_plans(
-                store,
-                id,
-                std::path::Path::new(&wt_path),
-                crate::plans::discover::default_adapters(),
-            );
+            if synced_worktrees.insert(id) {
+                let _ = crate::plans::discover::sync_plans(
+                    store,
+                    id,
+                    std::path::Path::new(&wt_path),
+                    crate::plans::discover::default_adapters(),
+                );
+            }
         }
         let abs_path = std::path::PathBuf::from(&wt_path).join(&rel);
         let text = match std::fs::read_to_string(&abs_path) {

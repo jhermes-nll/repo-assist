@@ -85,3 +85,27 @@ fn select_tick_missing_ordinal_changes_nothing() {
     let out = rewrite_lines(text, &lines);
     assert_eq!(out, text);
 }
+
+#[test]
+fn select_tick_indented_heading_counts_as_task_case_a() {
+    let text = "# Plan\n## Task 1\n- [ ] a\n    ## Task 2\n- [ ] b\n## Task 3\n- [ ] c\n";
+    let committed: std::collections::BTreeSet<usize> = [2].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "# Plan\n## Task 1\n- [ ] a\n    ## Task 2\n- [x] b\n## Task 3\n- [ ] c\n");
+}
+
+#[test]
+fn select_tick_only_indented_heading_does_not_tick_preamble() {
+    let text = "- [ ] preamble\n    ## Task 1\n";
+    let committed: std::collections::BTreeSet<usize> = [1].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "- [ ] preamble\n    ## Task 1\n");
+}
+
+#[test]
+fn select_tick_mix_indented_then_plain_headings() {
+    let text = "    ## Task 1\n- [ ] a\n## Task 2\n- [ ] b\n## Task 3\n- [ ] c\n";
+    let committed: std::collections::BTreeSet<usize> = [2].into_iter().collect();
+    let out = repo_assist::plans::tick::rewrite_lines(text, &repo_assist::plans::tick::select_tick_lines(text, &committed));
+    assert_eq!(out, "    ## Task 1\n- [ ] a\n## Task 2\n- [x] b\n## Task 3\n- [ ] c\n");
+}

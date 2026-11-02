@@ -204,7 +204,7 @@ fn parse_files_decl(line: &str) -> Option<Vec<String>> {
 /// Ordinal identity is positional: both the parser and the tick rewriter count task
 /// headings in document order, so renumbered or repeated task numbers never collide.
 pub fn is_task_heading(line: &str) -> bool {
-    parse_task_heading(line).is_some()
+    parse_task_heading(line.trim()).is_some()
 }
 
 /// Extract every `` `...` `` span from `s`, cleaning each. Parenthesised notes (which may

@@ -328,6 +328,25 @@ fn run_plans(args: &PlansArgs) -> Result<i32, anyhow::Error> {
     Ok(0)
 }
 
+
+/// Pure exit-code policy for `ra plans tick` (testable without a daemon): non-zero iff
+/// `--apply` was requested and at least one plan carries a non-empty `apply_error`.
+pub fn plans_tick_exit_code(result: &serde_json::Value, apply: bool) -> i32 {
+    if !apply {
+        return 0;
+    }
+    if let Some(plans) = result.get("plans").and_then(|v| v.as_array()) {
+        for p in plans {
+            if let Some(err) = p.get("apply_error").and_then(|v| v.as_str()) {
+                if !err.is_empty() {
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
 fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
     let mut client = resolve_and_connect(true)?;
     let mut params = serde_json::Map::new();
@@ -343,7 +362,6 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
         crate::ipc::Reply::Result { result, .. } => {
             // Print per-plan diffs
             if let Some(plans) = result.get("plans").and_then(|v| v.as_array()) {
-                let mut failed_apply = false;
                 for p in plans {
                     let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let dirty = p.get("dirty").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -355,7 +373,6 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
                     if let Some(err) = p.get("apply_error").and_then(|v| v.as_str()) {
                         if !err.is_empty() {
                             eprintln!("failed to apply {}: {}", id, err);
-                            failed_apply = true;
                         }
                     }
                     let diff = p.get("diff").and_then(|v| v.as_str()).unwrap_or("");
@@ -364,7 +381,7 @@ fn run_plans_tick(args: &TickArgs) -> Result<i32, anyhow::Error> {
                         print!("{}", diff);
                     }
                 }
-                if args.apply && failed_apply {
+                if crate::cli::plans_tick_exit_code(&result, args.apply) == 1 {
                     return Ok(1);
                 }
             }
