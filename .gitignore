@@ -5,3 +5,5 @@ Cargo.lock.orig
 .DS_Store
 
 .pi/
+
+.worktrees/
