@@ -1036,6 +1036,7 @@ pub fn plans_tick_json(
     let mut total_boxes = 0usize;
     let mut matched_plan = false;
     let mut skipped_no_paths = 0usize;
+    let mut committed_mismatch = false;
 
     for (plan_id, rel, _wt_id, wt_path) in plans {
         if let Some(f) = plan_filter {
@@ -1079,6 +1080,7 @@ pub fn plans_tick_json(
                 committed_set.insert(*ord as usize);
             }
         }
+        let committed_count = committed_set.len();
         // skipped if no expected paths: all tasks unknown
         let all_unknown = !tasks.is_empty() && tasks.iter().all(|(_, o)| o == "unknown");
         if all_unknown {
@@ -1087,6 +1089,23 @@ pub fn plans_tick_json(
 
         let dirty = crate::plans::tick::is_git_dirty(std::path::Path::new(&wt_path), &rel);
         let lines = crate::plans::tick::select_tick_lines(&text, &committed_set);
+        let mut task_has_box: Vec<bool> = Vec::new();
+        for l in text.lines() {
+            if crate::plans::superpowers::is_task_heading(l) {
+                task_has_box.push(false);
+            } else if crate::plans::parse_checkbox(l).is_some() {
+                if let Some(last) = task_has_box.last_mut() {
+                    *last = true;
+                }
+            }
+        }
+        if committed_count > 0
+            && committed_set
+                .iter()
+                .any(|&o| o == 0 || o > task_has_box.len() || !task_has_box[o - 1])
+        {
+            committed_mismatch = true;
+        }
         // generate diff
         let new_text = crate::plans::tick::rewrite_lines(&text, &lines);
         let mut diff = String::new();
@@ -1151,6 +1170,11 @@ pub fn plans_tick_json(
         if let Some(f) = plan_filter {
             return Err(crate::store::StoreError::NotFound(f.to_string()));
         }
+    }
+    if committed_mismatch {
+        return Err(crate::store::StoreError::Mismatch(
+            "no checkboxes derived from plan text".to_string(),
+        ));
     }
     let summary = format!("{} boxes in {} tasks", total_boxes, total_tasks);
     Ok(serde_json::json!({

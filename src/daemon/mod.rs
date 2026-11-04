@@ -41,6 +41,31 @@ pub struct DaemonState {
     pub env: Env,
 }
 
+/// Initial startup scan: sync worktrees + plans. Marks the store's startup-scan
+/// barrier complete only when every step succeeds; returns an error otherwise (and
+/// leaves the barrier unset so the tick path surfaces the failure).
+pub fn startup_scan(
+    store: &crate::store::Store,
+    repo_root: &std::path::Path,
+) -> Result<(), std::io::Error> {
+    crate::sources::git::sync_worktrees(store, repo_root)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let wts = store
+        .worktree_id_paths()
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    for (id, path) in wts {
+        crate::plans::discover::sync_plans(
+            store,
+            id,
+            std::path::Path::new(&path),
+            crate::plans::discover::default_adapters(),
+        )
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    }
+    store.mark_startup_scan_complete();
+    Ok(())
+}
+
 /// Run the daemon for the repository containing `repo_root` (Section 6).
 ///
 /// Resolves the repo key, (re)creates the socket while holding the pidfile lock, opens (and
@@ -101,18 +126,11 @@ pub async fn run_foreground(repo_root: &Path, state: DaemonState) -> Result<(), 
     );
 
     // Initial startup scan: sync worktrees + plans before serving ticks (barrier signal).
-    let _ = crate::sources::git::sync_worktrees(&store, repo_root);
-    if let Ok(wts) = store.worktree_id_paths() {
-        for (id, path) in wts {
-            let _ = crate::plans::discover::sync_plans(
-                &store,
-                id,
-                std::path::Path::new(&path),
-                crate::plans::discover::default_adapters(),
-            );
-        }
+    // Do NOT mark complete unless every sync step succeeded; a failure leaves the barrier
+    // unset so the tick path surfaces it (wait_for_startup_scan returns an error).
+    if let Err(e) = crate::daemon::startup_scan(&store, repo_root) {
+        tracing::error!("startup scan failed, tick barrier left unset: {e}");
     }
-    store.mark_startup_scan_complete();
 
     // Signal to the accept loop to shut down.
     let (stop_tx, stop_rx) = watch::channel::<Option<u32>>(None);
