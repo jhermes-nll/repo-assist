@@ -219,3 +219,29 @@ pub(crate) fn parse_checkbox(line: &str) -> Option<bool> {
 pub fn plan_globs() -> Vec<String> {
     crate::plans::discover::plan_globs()
 }
+
+#[cfg(test)]
+mod maintenance_tests {
+    use super::*;
+
+    #[test]
+    fn parse_checkbox_variants() {
+        assert_eq!(parse_checkbox("- [x] done"), Some(true));
+        assert_eq!(parse_checkbox("- [X] done"), Some(true));
+        assert_eq!(parse_checkbox("- [ ] open"), Some(false));
+        assert_eq!(parse_checkbox("- [~] unknown"), Some(false));
+        assert_eq!(parse_checkbox("- [] weird"), Some(false));
+        assert_eq!(parse_checkbox("- [spec](http://x)"), None);
+        assert_eq!(parse_checkbox("- [x]no space"), None);
+        assert_eq!(parse_checkbox("not a checkbox"), None);
+    }
+
+    #[test]
+    fn strip_heading_levels() {
+        assert_eq!(strip_heading("# Title", 1), Some("Title".to_string()));
+        assert_eq!(strip_heading("## Title", 2), Some("Title".to_string()));
+        assert_eq!(strip_heading("## Title", 1), None);
+        assert_eq!(strip_heading("#Title", 1), None);
+        assert_eq!(strip_heading("plain", 1), None);
+    }
+}
