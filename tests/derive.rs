@@ -91,3 +91,35 @@ fn truth_table_empty_expected_paths() {
 // silence unused import
 #[allow(dead_code)]
 fn _use_git_touch(_x: GitCommitTouch) {}
+
+#[test]
+fn plan_first_commit_excludes_itself_and_older() {
+    let input = DeriveInput {
+        expected_paths: vec!["a.rs".into()],
+        changed_paths: vec![],
+        branch_commits: vec![
+            touch("newer", &["a.rs"]),
+            touch("plan", &[]),
+            touch("older", &["a.rs"]),
+        ],
+        plan_first_commit_sha: Some("plan".into()),
+    };
+    let out = derive_observed(&input);
+    assert_eq!(out.state, "committed");
+    assert_eq!(out.evidence[0].reference, "newer");
+}
+
+#[test]
+fn evidence_confidence_always_inferred() {
+    let input = DeriveInput {
+        expected_paths: vec!["a.rs".into()],
+        changed_paths: vec![],
+        branch_commits: vec![touch("c1", &["a.rs"])],
+        plan_first_commit_sha: None,
+    };
+    let out = derive_observed(&input);
+    for e in &out.evidence {
+        assert_eq!(e.confidence, "inferred");
+        assert_eq!(e.kind, "commit");
+    }
+}
