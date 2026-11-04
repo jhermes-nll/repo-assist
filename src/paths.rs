@@ -160,10 +160,7 @@ mod maintenance_tests {
     #[test]
     fn env_state_dir_uses_xdg_state_home_when_set() {
         let e = Env::with("/home/u", Some(String::from("/state")), None);
-        assert_eq!(
-            e.state_dir("k").to_string_lossy(),
-            "/state/repo-assist/k"
-        );
+        assert_eq!(e.state_dir("k").to_string_lossy(), "/state/repo-assist/k");
         assert_eq!(
             e.socket_path("k").to_string_lossy(),
             "/state/repo-assist/k/daemon.sock"
