@@ -225,6 +225,29 @@ fn sync_worktrees_replace_files_is_atomic() {
         .unwrap();
     assert!(before > 0, "seeded changed file should be recorded");
 
+    // Sentinel: Phase B's `UPDATE worktrees SET head, merge_base, updated_ms` must roll
+    // back with the file set (upsert_worktree's ON CONFLICT never writes merge_base).
+    store
+        .write(|c| {
+            c.execute("UPDATE worktrees SET merge_base = 'SENTINEL-MB'", [])?;
+            Ok(())
+        })
+        .unwrap();
+
+    let pairs_before: Vec<(String, String)> = store
+        .read(|c| {
+            let mut stmt =
+                c.prepare("SELECT path, origin FROM worktree_files ORDER BY path, origin")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+        .unwrap();
+    assert_eq!(pairs_before.len() as i64, before);
+
     store
         .write(|c| {
             c.execute_batch(
@@ -240,4 +263,34 @@ fn sync_worktrees_replace_files_is_atomic() {
         .read(|c| c.query_row("SELECT COUNT(*) FROM worktree_files", [], |r| r.get(0)))
         .unwrap();
     assert_eq!(after, before, "file set must not be deleted on failure");
+
+    let mbs: Vec<String> = store
+        .read(|c| {
+            let mut stmt = c.prepare("SELECT merge_base FROM worktrees")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+        .unwrap();
+    assert!(!mbs.is_empty());
+    for mb in mbs {
+        assert_eq!(mb, "SENTINEL-MB", "Phase B UPDATE must roll back");
+    }
+
+    let pairs_after: Vec<(String, String)> = store
+        .read(|c| {
+            let mut stmt =
+                c.prepare("SELECT path, origin FROM worktree_files ORDER BY path, origin")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+        .unwrap();
+    assert_eq!(pairs_after, pairs_before, "pair set must be byte-identical");
 }
