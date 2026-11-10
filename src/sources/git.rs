@@ -159,6 +159,12 @@ fn upsert_worktree(
 }
 
 /// Replace one worktree's changed-file set with `rows` of `(path, origin)`.
+///
+/// Opens no transaction of its own: the `DELETE FROM worktree_files` plus the
+/// `INSERT OR IGNORE` loop are atomic only because every call site invokes it
+/// from inside a `Store::write` closure, and `Store::write` wraps each closure
+/// in a single `unchecked_transaction` (BEGIN DEFERRED). It must never be
+/// called on a raw connection outside `store.write`.
 fn replace_files(
     conn: &rusqlite::Connection,
     worktree_id: i64,
