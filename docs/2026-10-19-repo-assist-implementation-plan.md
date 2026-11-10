@@ -369,7 +369,7 @@ tests/fixtures/{pi/,plans/}
 - [ ] Add middleware
 ```
 
-Note: the two unchecked boxes inside the fenced sample above are illustrative parser input, not open work items.
+Note: the two unchecked boxes inside the fenced sample above are illustrative parser input, not open work items. Census verdict: both boxes are fixture content and must not be ticked; no genuinely open work remains in this plan.
 
 Expected: 2 tasks; task 1 `open` with paths `src/limiter.rs`, `tests/limiter.rs`; task 2 `open` with `src/router.rs`.
 - Acceptance: parsers never panic on malformed files (property or fuzz-lite test); unknown formats yield a plan with zero tasks and a logged warning.
