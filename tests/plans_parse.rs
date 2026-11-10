@@ -81,6 +81,48 @@ fn representative_sample_parses_to_two_tasks_with_expected_paths() {
     assert_eq!(plan.declared_state(), "open");
 }
 
+/// The representative Rate Limit sample from the implementation plan (Task 3.1, the fenced
+/// block under `docs/2026-10-19-repo-assist-implementation-plan.md`), copied verbatim. It is
+/// parser input only: the two unchecked boxes (`Write failing test`, `Add middleware`) are
+/// illustrative sample content, and it parses to 2 open tasks with the expected paths.
+#[test]
+fn rate_limit_sample_parses_to_two_open_tasks() {
+    let sample = concat!(
+        "# Rate Limit Implementation Plan\n",
+        "### Task 1: Add limiter\n",
+        "- Create: `src/limiter.rs`\n",
+        "- Test: `tests/limiter.rs`\n",
+        "- [ ] Write failing test\n",
+        "- [x] Implement\n",
+        "### Task 2: Wire into router\n",
+        "- Modify: `src/router.rs:40-80`\n",
+        "- [ ] Add middleware\n"
+    );
+    let plan = parse_plan(sample);
+
+    assert_eq!(plan.title, "Rate Limit Implementation Plan");
+    assert_eq!(plan.task_count(), 2, "expected exactly 2 tasks");
+
+    let t1 = &plan.tasks[0];
+    assert_eq!(t1.title, "Add limiter");
+    assert_eq!(t1.declared, "open", "1 of 2 boxes checked -> open");
+    assert_eq!(
+        t1.expected_paths,
+        vec!["src/limiter.rs", "tests/limiter.rs"]
+    );
+
+    let t2 = &plan.tasks[1];
+    assert_eq!(t2.title, "Wire into router");
+    assert_eq!(t2.declared, "open");
+    assert_eq!(t2.expected_paths, vec!["src/router.rs"]);
+
+    assert_eq!(
+        ordered_paths(&plan),
+        vec!["src/limiter.rs", "src/router.rs", "tests/limiter.rs"]
+    );
+    assert_eq!(plan.declared_state(), "open");
+}
+
 /// Parsing from a fixture file yields the same plan as parsing the same content inline.
 #[test]
 fn fixture_file_parses_like_inline_text() {
