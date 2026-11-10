@@ -4,7 +4,10 @@
 //! runs per repository. If another *live* daemon holds the lock, the second daemon refuses to
 //! start (Section 6: "Refuse to start if another live daemon holds the pidfile flock"). A stale
 //! lock is released by the OS when its holder dies, so acquiring the flock is the authority on
-//! liveness; the pidfile only names the holder for friendly messages.
+//! liveness; the pidfile only names the holder for friendly messages. Two facts make that
+//! design narrow: it is safe only because `fs2` is backed by `flock(2)` (see the contract below),
+//! and the lock path is Unix-only — fs2's Windows path is `LockFileEx` range locking, where a
+//! contender's read of the locked region can fail outright.
 //!
 //! **Implementation contract:** correctness of writing the pid through `fs::write` on a second,
 //! short-lived file descriptor depends on `fs2` being backed by `flock(2)` — `flock` is scoped

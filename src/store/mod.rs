@@ -76,9 +76,6 @@ pub struct Store {
     pub startup_scan_complete: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// A synchronous write transaction against a [`Store`].
-pub type WriteTxn<'a> = rusqlite::Transaction<'a>;
-
 /// One row to upsert into `plans` (Task 2.4). Keyed on `id`.
 #[derive(Debug, Clone)]
 pub struct PlanRow<'a> {
