@@ -138,7 +138,7 @@ The three gates are re-verified on this machine for this task: `cargo fmt --chec
 | `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
 | `e41085e` | fix(test): repair tui detail-clears test |
 
-Latest `main` commit: `PENDING_MERGE_SHA` (as of 2026-11-12). `cargo test` reports **PENDING_TEST_COUNT passed** at this commit.
+Latest `main` commit: `d00cfd1` (as of 2026-11-12). `cargo test` reports **205 passed** at this commit.
 
 ## Status summary
 
