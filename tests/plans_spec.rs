@@ -284,3 +284,18 @@ fn repos_own_implementation_plan_is_tracked_as_a_real_state_spec() {
         .unwrap();
     assert!(tasks > 0, "expected parsed tasks, got {tasks}");
 }
+
+/// The two unchecked boxes inside the fenced sample (plan lines 360-370) are
+/// parser fixture input, not open work: they must stay byte-identical, unticked,
+/// and be the only `- [ ]` rows in the document.
+#[test]
+fn fenced_sample_boxes_stay_byte_identical_and_unchecked() {
+    let doc = include_str!("../docs/2026-10-19-repo-assist-implementation-plan.md");
+    let line = |n: usize| doc.split('\n').nth(n - 1).unwrap_or("<missing>");
+    assert_eq!(line(360), "```markdown");
+    assert_eq!(line(365), "- [ ] Write failing test");
+    assert_eq!(line(369), "- [ ] Add middleware");
+    assert_eq!(line(370), "```");
+    let open: Vec<&str> = doc.split('\n').filter(|l| l.starts_with("- [ ]")).collect();
+    assert_eq!(open, ["- [ ] Write failing test", "- [ ] Add middleware"]);
+}
