@@ -162,3 +162,4 @@ Latest `main` commit: `d00cfd1` (as of 2026-11-12). `cargo test` reports **205 p
 ## TUI verification
 
 The TUI was verified in a real terminal as well as by tests: four tabs rendering real data, the detail pane surviving multiple refresh ticks, `Esc`, `/` filter, tab switching, and `q` restoring the terminal cleanly. The unit tests alone had missed two real defects.
+Smoke test 2: superpowers_full committed this with the task work.
