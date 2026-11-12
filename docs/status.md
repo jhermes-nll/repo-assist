@@ -106,7 +106,7 @@ Not exposed as RPC (run locally by CLI): `Doctor`.
 | `tui.rs` | 18 | four-tab TUI |
 | `views_render.rs` | 12 | view rendering + atomic writes |
 
-The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok. 177 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out` (per-suite: cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, findings_spec_source 6, fswatch 2, git_repo 3, git_source 8, lib (unit) 10, null_is_error 1, plans_discover 1, plans_parse 22, plans_spec 10, plans_tick_apply_failure 1, plans_tick_barrier_expiry 1, plans_tick_cli_exit 2, plans_tick_e2e 1, plans_tick_fresh_empty_table 1, plans_tick_sync_before_list 1, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tick_rewriter 15, tui 18, views_render 12, performance 0 passed / 1 ignored), green on 3 consecutive runs. Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
+The three gates are re-verified on this machine for this task: `cargo fmt --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, and `cargo test` = `test result: ok` (per-suite: cli 1, config 7, daemon_zero_writes 1, derive 6, doctor 7, findings_engine 5, findings_kind 1, findings_spec_source 6, fswatch 2, git_repo 3, git_source 8, lib (unit) 10, null_is_error 1, plans_discover 1, plans_parse 22, plans_spec 10, plans_tick_apply_failure 1, plans_tick_barrier_expiry 1, plans_tick_cli_exit 2, plans_tick_e2e 1, plans_tick_fresh_empty_table 1, plans_tick_sync_before_list 1, stale_socket 1, store 5, store_helpers 2, subscribe_rpc 6, task_2_3 2, task_2_4 3, task_3 3, task_4 12, tick_rewriter 15, tui 18, views_render 12, performance 0 passed / 1 ignored), green on 3 consecutive runs. Note: run with a short `TMPDIR` (e.g. `/tmp`) in deep worktrees, or the daemon unix socket path exceeds the 108-byte limit.
 
 ## Commits on `main`
 
@@ -138,7 +138,7 @@ The three gates are re-verified on this machine for this task: `cargo fmt --chec
 | `ac5e1b5` | fix(tui): detail survives refresh; tabular rows with headers |
 | `e41085e` | fix(test): repair tui detail-clears test |
 
-Latest `main` commit: `c2aa80f`. The seven `overnight-*` branches plus the two in-flight cezar branches (`cez/148278d7`, `cez/52509991`) have landed on `main` (101 -> 149 tests).
+Latest `main` commit: `PENDING_MERGE_SHA` (as of 2026-11-12). `cargo test` reports **PENDING_TEST_COUNT passed** at this commit.
 
 ## Status summary
 
