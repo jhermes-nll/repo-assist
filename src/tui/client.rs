@@ -160,6 +160,11 @@ impl DataSource {
         let mut wrows = Vec::new();
         if let Some(arr) = worktrees.get("worktrees").and_then(|v| v.as_array()) {
             for w in arr {
+                // `ra status` is the reference: the inventory RPC also carries
+                // gone worktrees (`present: false`); they must not reach the TUI.
+                if w.get("present").and_then(|v| v.as_bool()) == Some(false) {
+                    continue;
+                }
                 let path = w
                     .get("path")
                     .and_then(|v| v.as_str())

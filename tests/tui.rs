@@ -489,3 +489,73 @@ fn tui_worktrees_sessions_headers() {
     assert!(view2.contains("id | agent | last_event_ms"));
     assert!(view2.contains("claude"));
 }
+
+/// `ra status` is the reference: the TUI's worktree rows and count must agree with
+/// it, so worktrees listed by the inventory RPC with `present: false` must not
+/// reach the TUI.
+#[test]
+fn tui_worktree_rows_match_status_excluding_gone() {
+    use repo_assist::paths::repo_key_from_git_common_dir;
+    use repo_assist::paths::Env;
+    use repo_assist::sources::git::sync_worktrees;
+    use repo_assist::store::Store;
+
+    let mut repo = common::GitRepo::new();
+    repo.add_worktree("wt-a", "a.txt");
+    let wt = repo.paths[0].clone();
+
+    let state = tempfile::TempDir::new().unwrap();
+    let runtime = tempfile::TempDir::new().unwrap();
+    let env = Env::with(
+        "/tmp",
+        Some(state.path().display().to_string()),
+        Some(runtime.path().display().to_string()),
+    );
+    let key = repo_assist::paths::git_common_dir(repo.path())
+        .map(|c| repo_key_from_git_common_dir(&c))
+        .unwrap_or_else(|| "manual".to_string());
+    let sf = env.state_files(&key);
+    std::fs::create_dir_all(&sf.dir).unwrap();
+
+    // Seed: sync both worktrees, then delete wt-a's directory and sync again
+    // -> wt-a row marked present=0 while git still lists it.
+    let store = Store::open(&sf.db).unwrap();
+    sync_worktrees(&store, repo.path()).expect("sync");
+    std::fs::remove_dir_all(&wt).expect("remove wt-a dir");
+    sync_worktrees(&store, repo.path()).expect("sync after delete");
+
+    let sock = runtime
+        .path()
+        .join("repo-assist")
+        .join(format!("{key}.sock"));
+    let ra_bin = std::env::var("CARGO_BIN_EXE_ra").unwrap();
+    let _g = spawn_daemon(&ra_bin, repo.path(), state.path(), runtime.path());
+    wait_socket(&sock);
+
+    let mut ds = DataSource::new(sock.clone());
+    let mut fetched = None;
+    for _ in 0..20 {
+        if let Ok(s) = ds.fetch_all() {
+            fetched = Some(s);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let snap = fetched.expect("fetch");
+
+    let root = std::fs::canonicalize(repo.path())
+        .unwrap()
+        .display()
+        .to_string();
+    assert_eq!(
+        snap.counts.worktrees, 1,
+        "TUI count must match `ra status` worktree_count"
+    );
+    let rows = &snap.rows[Tab::Worktrees.index()];
+    let shown: Vec<&str> = rows.iter().map(|r| r.cells[0].as_str()).collect();
+    assert_eq!(
+        shown,
+        vec![root.as_str()],
+        "TUI worktree rows must match `ra status` (gone wt-a excluded)"
+    );
+}

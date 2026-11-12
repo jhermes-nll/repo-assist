@@ -17,6 +17,11 @@ pub fn check_plan_overlap(ctx: &CheckCtx) -> Vec<FindingCandidate> {
             continue;
         }
         let wt = super::plan_worktree(ws, p);
+        // A plan whose worktree directory is gone is not a live overlap — skip
+        // it, mirroring check_worktree_abandoned's `present` guard.
+        if wt.is_some_and(|w| !w.present) {
+            continue;
+        }
         if let Some(wt) = wt {
             let expected = super::expected_filtered(p, tasks, &patterns);
             if !expected.is_empty() {

@@ -21,6 +21,11 @@ pub fn check_plan_stalled(ctx: &CheckCtx) -> Vec<FindingCandidate> {
             continue;
         }
         let wt = super::plan_worktree(ws, p);
+        // A plan whose worktree directory is gone is not stalled — skip it,
+        // mirroring check_worktree_abandoned's `present` guard.
+        if wt.is_some_and(|w| !w.present) {
+            continue;
+        }
         let last = wt.and_then(|w| ctx.workspace.activity.get(&w.path).cloned().flatten());
         if let Some(last) = last {
             if last >= cutoff {

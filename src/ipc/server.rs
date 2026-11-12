@@ -421,14 +421,14 @@ pub fn render_views_json(
     Ok(json!({ "written": written }))
 }
 
-fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::StoreError> {
+pub fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::StoreError> {
     store.read(|conn| {
         let mut worktrees: Vec<Value> = {
             let mut stmt = conn.prepare(
                 "SELECT wt.path, wt.branch, wt.head, wt.is_main, wt.present, \
                  COALESCE((SELECT COUNT(*) FROM worktree_files wf WHERE wf.worktree_id = wt.id), 0) AS changed, \
                  wt.last_activity_ms \
-                 FROM worktrees wt ORDER BY wt.path",
+                 FROM worktrees wt WHERE wt.present = 1 ORDER BY wt.path",
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(json!({
@@ -449,14 +449,21 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
         };
         let active_plans: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM plans WHERE state='active' AND source != ?1",
+                "SELECT COUNT(*) FROM plans WHERE state='active' AND source != ?1 \
+                 AND (worktree_id IS NULL OR worktree_id IN (SELECT id FROM worktrees WHERE present = 1))",
                 [crate::plans::discover::SPEC_SOURCE],
                 |r| r.get(0),
             )?;
         let open_findings: i64 = conn
             .query_row("SELECT COUNT(*) FROM findings WHERE state='open'", [], |r| r.get(0))?;
         let sessions: i64 =
-            conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+            conn.query_row(
+                "SELECT COUNT(*) FROM sessions \
+                 WHERE worktree_id IS NULL \
+                    OR worktree_id NOT IN (SELECT id FROM worktrees WHERE present = 0)",
+                [],
+                |r| r.get(0),
+            )?;
         // Task 2.3: overlay per-worktree dirty status from the events table (persisted by
         // the bus). `store.worktree_dirty_view` opens its own read handle, so it is safe to
         // call here inside the read closure.
@@ -497,7 +504,7 @@ fn status_json(store: &Store, repo_key: &str) -> Result<Value, crate::store::Sto
 pub fn plans_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
     store.read(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT p.id, p.source, p.title, p.file, p.worktree_id, wt.path, p.state, p.first_seen_ms,              p.last_seen_ms, COALESCE(COUNT(t.id), 0) AS task_count,              COALESCE(SUM(CASE WHEN t.declared = 'done' THEN 1 ELSE 0 END), 0) AS declared_done,              COALESCE(SUM(CASE WHEN t.observed = 'done' THEN 1 ELSE 0 END), 0) AS observed_done              FROM plans p LEFT JOIN worktrees wt ON wt.id = p.worktree_id LEFT JOIN tasks t ON t.plan_id = p.id              GROUP BY p.id ORDER BY p.last_seen_ms DESC",
+            "SELECT p.id, p.source, p.title, p.file, p.worktree_id, wt.path, p.state, p.first_seen_ms,              p.last_seen_ms, COALESCE(COUNT(t.id), 0) AS task_count,              COALESCE(SUM(CASE WHEN t.declared = 'done' THEN 1 ELSE 0 END), 0) AS declared_done,              COALESCE(SUM(CASE WHEN t.observed = 'done' THEN 1 ELSE 0 END), 0) AS observed_done              FROM plans p LEFT JOIN worktrees wt ON wt.id = p.worktree_id LEFT JOIN tasks t ON t.plan_id = p.id              WHERE (wt.id IS NULL OR wt.present = 1) GROUP BY p.id ORDER BY p.last_seen_ms DESC",
         )?;
         let now = crate::sources::git::now_ms();
         let hours = config.thresholds.stalled_hours;
@@ -570,10 +577,10 @@ pub fn plans_json(store: &Store, config: &Config) -> Result<Value, crate::store:
 /// Build the `Method::Sessions` result (Task 4): every session with its worktree path (when
 /// mapped), most recently active first. Pure store read — the daemon's sessions ticker
 /// keeps the rows fresh, mirroring how `plans_json` reads what the daemon ingested.
-fn sessions_json(store: &Store) -> Result<serde_json::Value, crate::store::StoreError> {
+pub fn sessions_json(store: &Store) -> Result<serde_json::Value, crate::store::StoreError> {
     store.read(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.agent, s.file, s.cwd, s.worktree_id, wt.path,              s.started_ms, s.last_event_ms, s.tokens_in, s.tokens_out, s.tokens_cache,              s.cost_usd, s.tool_calls, s.byte_offset, s.parse_errors              FROM sessions s LEFT JOIN worktrees wt ON wt.id = s.worktree_id              ORDER BY COALESCE(s.last_event_ms, s.started_ms, 0) DESC, s.id",
+            "SELECT s.id, s.agent, s.file, s.cwd, s.worktree_id, wt.path,              s.started_ms, s.last_event_ms, s.tokens_in, s.tokens_out, s.tokens_cache,              s.cost_usd, s.tool_calls, s.byte_offset, s.parse_errors              FROM sessions s LEFT JOIN worktrees wt ON wt.id = s.worktree_id              WHERE wt.id IS NULL OR wt.present = 1              ORDER BY COALESCE(s.last_event_ms, s.started_ms, 0) DESC, s.id",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(serde_json::json!({
@@ -798,7 +805,7 @@ fn worktrees_json(store: &Store) -> Result<Value, crate::store::StoreError> {
 /// Build the `Method::Conflicts` result: worktree overlaps, branch-head merge conflicts, and
 /// overlaps between active plans. Severity `error` (merge conflict) or `warn` (overlap).
 /// Read-only: runs the checks and keeps only the conflict kinds, never writes to the store.
-fn conflicts_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
+pub fn conflicts_json(store: &Store, config: &Config) -> Result<Value, crate::store::StoreError> {
     let ws = store.check_workspace()?;
     let now = crate::sources::git::now_ms();
     let ctx = CheckCtx {
@@ -832,7 +839,7 @@ fn conflicts_json(store: &Store, config: &Config) -> Result<Value, crate::store:
 /// Build the `Method::WhoTouches` result: worktrees, plans, and sessions currently touching
 /// `target` (a repo-relative path). Read-only: rebuilds the workspace and matches each
 /// entity's changed set / expected paths / worktree against the target.
-fn who_touches_json(store: &Store, target: &str) -> Result<Value, crate::store::StoreError> {
+pub fn who_touches_json(store: &Store, target: &str) -> Result<Value, crate::store::StoreError> {
     let ws = store.check_workspace()?;
     let by_path: std::collections::HashMap<String, &WtInfo> =
         ws.worktrees.iter().map(|w| (w.path.clone(), w)).collect();
@@ -849,7 +856,7 @@ fn who_touches_json(store: &Store, target: &str) -> Result<Value, crate::store::
     let worktrees: Vec<Value> = ws
         .worktrees
         .iter()
-        .filter(|w| touches(&w.changed))
+        .filter(|w| w.present && touches(&w.changed))
         .map(|w| {
             json!({
                 "kind": "worktree",
@@ -866,6 +873,13 @@ fn who_touches_json(store: &Store, target: &str) -> Result<Value, crate::store::
         .plans
         .iter()
         .filter_map(|plan| {
+            // Plans on a gone worktree do not touch anything live.
+            let plan_wt = plan
+                .worktree_id
+                .and_then(|id| ws.worktrees.iter().find(|w| w.id == id));
+            if plan_wt.is_some_and(|w| !w.present) {
+                return None;
+            }
             let expected: Vec<String> = ws
                 .tasks
                 .iter()
@@ -900,7 +914,7 @@ fn who_touches_json(store: &Store, target: &str) -> Result<Value, crate::store::
         for (id, agent, wpath) in rows {
             if let Some(wp) = wpath {
                 if let Some(w) = by_path.get(&wp) {
-                    if touches(&w.changed) {
+                    if w.present && touches(&w.changed) {
                         out.push(json!({ "kind": "session", "id": id, "agent": agent }));
                     }
                 }

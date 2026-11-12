@@ -226,7 +226,10 @@ pub fn plan_commit_history(wt: &Path, base_ref: Option<&str>) -> HashMap<String,
 }
 
 pub fn sync_worktrees(store: &Store, repo_root: &Path) -> Result<(), crate::store::StoreError> {
-    let wts = discover_worktrees(repo_root);
+    // A worktree still registered in git but absent on disk (dir deleted, admin
+    // entry not yet pruned) is gone: drop it so Phase C marks it not-present.
+    let mut wts = discover_worktrees(repo_root);
+    wts.retain(|wt| wt.path.exists());
     let base_ref = detect_base_ref(repo_root);
     let ms = now_ms();
 
